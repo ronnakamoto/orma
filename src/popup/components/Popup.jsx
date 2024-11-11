@@ -1,6 +1,5 @@
-// src/popup/components/Popup.jsx
 import React, { useState, useEffect } from 'react';
-import { PlusIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
 import Memory from './Memory';
 import { aiService } from '../../services/aiService';
 
@@ -17,7 +16,6 @@ export default function Popup() {
     useEffect(() => {
         if (currentProject) {
             loadMemories(currentProject.id);
-            // Save current project to storage
             chrome.storage.local.set({ currentProjectId: currentProject.id });
         }
     }, [currentProject]);
@@ -50,7 +48,6 @@ export default function Popup() {
 
             request.onsuccess = () => {
                 setProjects(request.result);
-                // Load previously selected project
                 chrome.storage.local.get('currentProjectId', ({ currentProjectId }) => {
                     if (currentProjectId) {
                         const project = request.result.find(p => p.id === currentProjectId);
@@ -138,17 +135,14 @@ export default function Popup() {
             const projectStore = transaction.objectStore('projects');
             const memoryStore = transaction.objectStore('memories');
             
-            // Delete project
             await projectStore.delete(projectId);
             
-            // Delete all memories for this project
             const memoryIndex = memoryStore.index('projectId');
             const memories = await memoryIndex.getAll(projectId);
             for (const memory of memories) {
                 await memoryStore.delete(memory.id);
             }
 
-            // Update UI
             setProjects(projects.filter(p => p.id !== projectId));
             if (currentProject?.id === projectId) {
                 setCurrentProject(null);
@@ -159,82 +153,79 @@ export default function Popup() {
         }
     }
 
-    function formatDate(timestamp) {
-        return new Date(timestamp).toLocaleString();
-    }
-
     return (
-        <div className="w-[400px] p-4 bg-white">
-            <div className="flex items-center justify-between mb-6">
-                <h1 className="text-2xl font-semibold text-gray-900">Orma</h1>
+        <div className="w-[400px] h-[600px] bg-gray-50 text-gray-900 font-sans overflow-hidden">
+            <header className="bg-white shadow-sm px-6 py-4 flex items-center justify-between">
+                <h1 className="text-2xl font-semibold bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent">Orma</h1>
                 <button
                     onClick={handleNewProject}
-                    className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-full text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all duration-300 ease-in-out transform hover:scale-105"
                     disabled={loading}
                 >
                     <PlusIcon className="h-4 w-4 mr-1" />
                     New Project
                 </button>
-            </div>
+            </header>
 
-            {loading ? (
-                <div className="flex justify-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-                </div>
-            ) : (
-                <>
-                    <div className="mb-6">
-                        <select
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                            value={currentProject?.id || ''}
-                            onChange={(e) => {
-                                const project = projects.find(p => p.id === Number(e.target.value));
-                                setCurrentProject(project);
-                            }}
-                        >
-                            <option value="">Select Project</option>
-                            {projects.map(project => (
-                                <option key={project.id} value={project.id}>
-                                    {project.name}
-                                </option>
-                            ))}
-                        </select>
+            <main className="p-6 overflow-y-auto h-[calc(100%-4rem)]">
+                {loading ? (
+                    <div className="flex justify-center items-center h-full">
+                        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-600"></div>
                     </div>
-
-                    {currentProject && (
-                        <div className="space-y-4">
-                            <div className="flex justify-between items-center">
-                                <h2 className="text-lg font-medium text-gray-900">Memories</h2>
-                                <button
-                                    onClick={() => handleDeleteProject(currentProject.id)}
-                                    className="text-sm text-red-600 hover:text-red-800"
-                                >
-                                    Delete Project
-                                </button>
-                            </div>
-                            
-                            {memories.length === 0 ? (
-                                <p className="text-center text-gray-500 py-4">No memories yet</p>
-                            ) : (
-                                <div className="space-y-3">
-                                    {memories.map(memory => (
-                                        <Memory 
-                                            key={memory.id}
-                                            memory={memory}
-                                            onDelete={handleDeleteMemory}
-                                        />
-                                    ))}
-                                </div>
-                            )}
+                ) : (
+                    <>
+                        <div className="mb-6">
+                            <select
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-300 ease-in-out appearance-none bg-white hover:border-indigo-500"
+                                value={currentProject?.id || ''}
+                                onChange={(e) => {
+                                    const project = projects.find(p => p.id === Number(e.target.value));
+                                    setCurrentProject(project);
+                                }}
+                            >
+                                <option value="">Select Project</option>
+                                {projects.map(project => (
+                                    <option key={project.id} value={project.id}>
+                                        {project.name}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
-                    )}
-                </>
-            )}
+
+                        {currentProject && (
+                            <div className="space-y-4 animate-fade-in">
+                                <div className="flex justify-between items-center">
+                                    <h2 className="text-lg font-medium text-gray-900">{currentProject.name}</h2>
+                                    <button
+                                        onClick={() => handleDeleteProject(currentProject.id)}
+                                        className="text-sm text-red-600 hover:text-red-800 transition-colors duration-300 ease-in-out hover:underline"
+                                    >
+                                        Delete Project
+                                    </button>
+                                </div>
+                                
+                                {memories.length === 0 ? (
+                                    <p className="text-center text-gray-500 py-8 animate-pulse">No memories yet</p>
+                                ) : (
+                                    <div className="space-y-4">
+                                        {memories.map(memory => (
+                                            <Memory 
+                                                key={memory.id}
+                                                memory={memory}
+                                                onDelete={handleDeleteMemory}
+                                            />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </>
+                )}
+            </main>
         </div>
     );
 }
 
-// Helper function to open IndexedDB
 async function openDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open('orma-db', 1);
