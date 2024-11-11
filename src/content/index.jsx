@@ -22,6 +22,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Only inject on ChatGPT or Claude
 if (window.location.hostname.includes('chat.openai.com') || 
+window.location.hostname.includes('chatgpt.com') ||
     window.location.hostname.includes('claude.ai')) {
   
   const textArea = document.querySelector('textarea');

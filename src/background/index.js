@@ -2,7 +2,15 @@ const TOKEN_LIMITS = {
   SHORT_TERM: 10,
   LONG_TERM: 10000,
   BUFFER_COMPRESSION: 20,
+  NANO_CONTEXT: 1024, // Total context window size
+  NANO_OVERHEAD: 26, // Tokens used by the model
+  NANO_AVAILABLE: 998, // NANO_CONTEXT - NANO_OVERHEAD
+  CHARS_PER_TOKEN: 4, // Approximate number of characters per token
 };
+
+function estimateTokens(text) {
+  return Math.ceil(text.length / TOKEN_LIMITS.CHARS_PER_TOKEN);
+}
 
 let shortTermBuffer = [];
 
@@ -182,70 +190,118 @@ async function addMemory(content, projectId) {
 
 async function compressShortTermMemory(projectId) {
   if (shortTermBuffer.length === 0) {
-    console.log('No memories to compress');
+    console.log("No memories to compress");
     return;
   }
 
   try {
     console.log(`Compressing ${shortTermBuffer.length} memories...`);
-    
-    // Prepare memories in a more structured way for AI
-    const memoryText = shortTermBuffer
-      .sort((a, b) => b.importance - a.importance)
-      .map((m, i) => {
-        // Extract the actual content without the timestamp and context
-        // This assumes the content format we used in addMemory:
-        // [timestamp]\ncontent\n\nContext: context
-        const contentParts = m.content.split('\n\n');
-        const mainContent = contentParts[0].split('\n').slice(1).join('\n');
-        
-        return `Memory ${i + 1} (Importance: ${m.importance}):
-${mainContent}`;
-      })
-      .join('\n\n');
+
+    // Sort memories by importance
+    const sortedMemories = shortTermBuffer.sort(
+      (a, b) => b.importance - a.importance
+    );
+
+    // Prepare memories while tracking tokens
+    let currentTokens = 0;
+    const memoriesToCompress = [];
+    const template = `Memory X (Importance: Y):\nContent\n\n`;
+    const templateTokens = estimateTokens(template);
+
+    // Reserve tokens for the prompt template and expected output
+    const promptOverhead = estimateTokens(`
+Create a comprehensive summary that:
+1. Identifies main themes
+2. Preserves important details
+3. Shows relationships
+4. Highlights insights
+5. Maintains chronological order
+
+Format as:
+SUMMARY:
+[Overview]
+
+KEY POINTS:
+- Points
+
+RELATIONSHIPS:
+- Relations
+
+DETAILS:
+- Details
+    `);
+
+    const availableTokens = TOKEN_LIMITS.NANO_AVAILABLE - promptOverhead;
+    console.log(`Available tokens for memories: ${availableTokens}`);
+
+    for (const memory of sortedMemories) {
+      // Extract the actual content without metadata
+      const contentParts = memory.content.split("\n\n");
+      const mainContent = contentParts[0].split("\n").slice(1).join("\n");
+
+      const memoryText = `Memory ${
+        memoriesToCompress.length + 1
+      } (Importance: ${memory.importance}):\n${mainContent}`;
+      const memoryTokens = estimateTokens(memoryText) + templateTokens;
+
+      if (currentTokens + memoryTokens > availableTokens) {
+        console.log(
+          `Token limit reached at ${currentTokens} tokens. Processing batch.`
+        );
+        break;
+      }
+
+      memoriesToCompress.push({
+        text: memoryText,
+        originalMemory: memory,
+      });
+      currentTokens += memoryTokens;
+    }
+
+    console.log(
+      `Processing ${memoriesToCompress.length} memories with ~${currentTokens} tokens`
+    );
 
     // Use AI for compression with a clear structure
     const summarizer = await ai.summarizer.create();
     const compressedContent = await summarizer.summarize(
-`These are related memories that need to be compressed into a meaningful summary:
+      `Compress these related memories into a meaningful summary:
 
-${memoryText}
+${memoriesToCompress.map((m) => m.text).join("\n\n")}
 
 Create a comprehensive summary that:
-1. Identifies the main themes and key ideas
-2. Preserves important details and context
-3. Shows relationships between different memories
-4. Highlights the most significant insights
-5. Maintains chronological or logical order where relevant
+1. Identifies main themes
+2. Preserves important details
+3. Shows relationships
+4. Highlights insights
+5. Maintains chronological order
 
-Format the output as:
+Format as:
 SUMMARY:
-[Main overview of the combined memories]
+[Overview]
 
 KEY POINTS:
-- [First key point]
-- [Second key point]
-...
+- Points
 
-RELATIONSHIPS & PATTERNS:
-- [First relationship/pattern]
-- [Second relationship/pattern]
-...
+RELATIONSHIPS:
+- Relations
 
-IMPORTANT DETAILS:
-- [First important detail]
-- [Second important detail]
-...`
+DETAILS:
+- Details`
     );
 
     // Add metadata to the compressed content
     const timestamp = new Date().toISOString();
-    const finalContent = `[${timestamp}] COMPRESSED MEMORY (${shortTermBuffer.length} memories)
+    const finalContent = `[${timestamp}] COMPRESSED MEMORY (${
+      memoriesToCompress.length
+    } memories)
 
 ${compressedContent}
 
 Source Memories:
-${shortTermBuffer.map((m, i) => `${i + 1}. ${m.content.split('\n')[1]}`).join('\n')}`;
+${memoriesToCompress
+  .map((m, i) => `${i + 1}. ${m.originalMemory.content.split("\n")[1]}`)
+  .join("\n")}`;
 
     summarizer.destroy();
 
@@ -254,40 +310,65 @@ ${shortTermBuffer.map((m, i) => `${i + 1}. ${m.content.split('\n')[1]}`).join('\
       content: finalContent,
       projectId,
       timestamp: Date.now(),
-      type: 'compressed',
-      importance: Math.max(...shortTermBuffer.map(m => m.importance)),
-      sourceCount: shortTermBuffer.length
+      type: "compressed",
+      importance: Math.max(
+        ...memoriesToCompress.map((m) => m.originalMemory.importance)
+      ),
+      sourceCount: memoriesToCompress.length,
     });
 
-    console.log('Compression complete, clearing buffer');
-    shortTermBuffer = [];
-    
+    // Remove compressed memories from buffer
+    shortTermBuffer = sortedMemories.slice(memoriesToCompress.length);
+
+    // If we still have memories in the buffer, process them too
+    if (shortTermBuffer.length >= TOKEN_LIMITS.SHORT_TERM) {
+      console.log(
+        `${shortTermBuffer.length} memories remaining in buffer, continuing compression...`
+      );
+      await compressShortTermMemory(projectId);
+    }
+
     return compressedMemory;
   } catch (error) {
-    console.error('Error compressing memories:', error);
-    // Fallback to basic compression
+    console.error("Error compressing memories:", error);
+    // Fallback to basic compression, still respecting token limits
     const timestamp = new Date().toISOString();
+    const sortedMemories = shortTermBuffer
+      .sort((a, b) => b.importance - a.importance)
+      .slice(
+        0,
+        Math.floor(
+          TOKEN_LIMITS.NANO_AVAILABLE / TOKEN_LIMITS.CHARS_PER_TOKEN / 100
+        )
+      ); // Conservative estimate
+
     const bufferContent = `[${timestamp}] COMPRESSED MEMORIES
 
 SUMMARY:
-Combined ${shortTermBuffer.length} related memories.
+Combined ${sortedMemories.length} related memories.
 
 CONTENTS:
-${shortTermBuffer
-  .sort((a, b) => b.importance - a.importance)
+${sortedMemories
   .map((m, i) => `Memory ${i + 1} (Importance: ${m.importance}):\n${m.content}`)
-  .join('\n\n---\n\n')}`;
+  .join("\n\n---\n\n")}`;
 
     const compressedMemory = await storeMemory({
       content: bufferContent,
       projectId,
       timestamp: Date.now(),
-      type: 'compressed',
-      importance: Math.max(...shortTermBuffer.map(m => m.importance)),
-      sourceCount: shortTermBuffer.length
+      type: "compressed",
+      importance: Math.max(...sortedMemories.map((m) => m.importance)),
+      sourceCount: sortedMemories.length,
     });
 
-    shortTermBuffer = [];
+    // Remove compressed memories from buffer
+    shortTermBuffer = shortTermBuffer.slice(sortedMemories.length);
+
+    // If we still have memories in buffer, continue compression
+    if (shortTermBuffer.length >= TOKEN_LIMITS.SHORT_TERM) {
+      await compressShortTermMemory(projectId);
+    }
+
     return compressedMemory;
   }
 }
