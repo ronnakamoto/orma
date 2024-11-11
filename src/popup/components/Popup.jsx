@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { PlusIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
 import Memory from './Memory';
+import { aiService } from '../../services/aiService';
 
 export default function Popup() {
     const [projects, setProjects] = useState([]);
@@ -20,6 +21,25 @@ export default function Popup() {
             chrome.storage.local.set({ currentProjectId: currentProject.id });
         }
     }, [currentProject]);
+
+    useEffect(() => {
+        const handleAIOperation = async (message, sender, sendResponse) => {
+            if (message.type === 'EXECUTE_AI_OPERATION') {
+                try {
+                    const result = await aiService[message.operation](
+                        ...Object.values(message.data)
+                    );
+                    sendResponse(result);
+                } catch (error) {
+                    console.error('Error executing AI operation:', error);
+                    sendResponse({ error: error.message });
+                }
+            }
+        };
+    
+        chrome.runtime.onMessage.addListener(handleAIOperation);
+        return () => chrome.runtime.onMessage.removeListener(handleAIOperation);
+    }, []);
 
     async function loadProjects() {
         try {
