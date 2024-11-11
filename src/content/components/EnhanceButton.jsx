@@ -1,9 +1,4 @@
 import React, { useState } from 'react';
-import { OrmaDB } from '../../lib/db';
-import { OrmaAI } from '../../lib/ai';
-
-const db = new OrmaDB();
-const ai = new OrmaAI(db);
 
 export default function EnhanceButton({ textArea }) {
   const [loading, setLoading] = useState(false);

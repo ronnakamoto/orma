@@ -5,6 +5,7 @@ mix.setPublicPath('dist')
    .js('src/background/index.js', 'dist/js/background.js')
    .js('src/content/index.jsx', 'dist/js/content.js')
    .js('src/popup/index.jsx', 'dist/js/popup.js')
+   .js('src/offscreen/index.js', 'dist/js/offscreen.js')
    .react()
    .postCss('src/css/app.css', 'dist/css/app.css', [
      require('postcss-import'),
@@ -13,6 +14,7 @@ mix.setPublicPath('dist')
    ])
    .copy('src/manifest.json', 'dist')
    .copy('src/html/popup.html', 'dist')
+   .copy('src/html/offscreen.html', 'dist')
    .webpackConfig({
      module: {
        rules: [

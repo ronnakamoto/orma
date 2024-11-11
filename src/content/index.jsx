@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client';
 import EnhanceButton from './components/EnhanceButton';
 import Notification from './components/Notification';
 
+// Mark content script as loaded
+window.ormaContentScriptLoaded = true;
+
 // Create a container for notifications
 const notificationContainer = document.createElement('div');
 document.body.appendChild(notificationContainer);
