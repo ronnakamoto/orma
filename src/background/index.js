@@ -66,7 +66,7 @@ async function initializeDB() {
   });
 }
 
-async function showNotification(tab, message) {
+async function showNotification(tab, message, style = "info") {
   try {
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -89,6 +89,7 @@ async function showNotification(tab, message) {
     await chrome.tabs.sendMessage(tab.id, {
       type: "SHOW_NOTIFICATION",
       message: message,
+      style
     });
   } catch (error) {
     console.error("Error showing notification:", error);
