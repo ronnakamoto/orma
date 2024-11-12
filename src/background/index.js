@@ -1,11 +1,14 @@
 const TOKEN_LIMITS = {
-  SHORT_TERM: 10,
+  SHORT_TERM: 5,
   LONG_TERM: 10000,
   BUFFER_COMPRESSION: 20,
   NANO_CONTEXT: 1024, // Total context window size
   NANO_OVERHEAD: 26, // Tokens used by the model
   NANO_AVAILABLE: 998, // NANO_CONTEXT - NANO_OVERHEAD
   CHARS_PER_TOKEN: 4, // Approximate number of characters per token
+  PROMPT_RESERVE: 200,    // Reserve tokens for the compression prompt
+  SUMMARY_RESERVE: 100,   // Reserve tokens for compressed memory summaries
+  OUTPUT_RESERVE: 300,    // Reserve tokens for expected output structure
 };
 
 function estimateTokens(text) {
@@ -124,38 +127,38 @@ async function calculateImportance(content, existingMemories) {
 
 async function addMemory(content, projectId) {
   try {
+    console.log('=== Starting addMemory ===');
+    console.log('Current buffer size:', shortTermBuffer.length);
+
     const project = await getProject(projectId);
     const projectContext = project?.description || "";
     const timestamp = new Date().toISOString();
 
-    // Create a simple memory with timestamp and context
+    // Create memory content
     const memoryContent = `[${timestamp}]\n${content}\n\nContext: ${
       projectContext || "Saved from webpage"
     }`;
 
-    // Calculate basic importance score
+    // Calculate importance
     const existingMemories = await getAllMemories(projectId);
-    const { score: importance, reasoning } = await calculateImportance(
+    const { score: importance } = await calculateImportance(
       content,
       existingMemories
     );
 
-    console.log(`Adding memory with importance ${importance}`);
-
     // Add to short-term buffer
-    shortTermBuffer.push({
+    const newMemory = {
       content: memoryContent,
       timestamp: Date.now(),
       projectId,
       importance,
-    });
-
-    console.log(
-      `Buffer size: ${shortTermBuffer.length}, Limit: ${TOKEN_LIMITS.SHORT_TERM}`
-    );
+    };
+    
+    shortTermBuffer.push(newMemory);
+    console.log('Added to buffer. New size:', shortTermBuffer.length);
 
     // Store raw memory
-    const memory = await storeMemory({
+    const storedMemory = await storeMemory({
       content: memoryContent,
       projectId,
       timestamp: Date.now(),
@@ -165,22 +168,15 @@ async function addMemory(content, projectId) {
 
     // Check if buffer needs compression
     if (shortTermBuffer.length >= TOKEN_LIMITS.SHORT_TERM) {
-      console.log("Compressing memories...");
+      console.log('Buffer full, starting compression...');
       await compressShortTermMemory(projectId);
     }
 
-    // Check if we need to form root memory
-    const totalContent = existingMemories.map((m) => m.content).join(" ");
-    if (totalContent.length > TOKEN_LIMITS.LONG_TERM) {
-      await formRootMemory(projectId, [...existingMemories, memory]);
-    }
-
-    return memory;
+    return storedMemory;
   } catch (error) {
     console.error("Error in addMemory:", error);
-    const timestamp = new Date().toISOString();
     return await storeMemory({
-      content: `[${timestamp}]\n${content}\n\nContext: Saved from webpage`,
+      content: `[${new Date().toISOString()}]\n${content}\n\nContext: Saved from webpage`,
       projectId,
       timestamp: Date.now(),
       type: "raw",
@@ -190,188 +186,380 @@ async function addMemory(content, projectId) {
 }
 
 async function compressShortTermMemory(projectId) {
-  if (shortTermBuffer.length === 0) {
-    console.log("No memories to compress");
-    return;
+  console.log('=== Starting compression ===');
+  console.log('Buffer size at start:', shortTermBuffer.length);
+
+  if (shortTermBuffer.length < TOKEN_LIMITS.SHORT_TERM) {
+    console.log('Not enough memories to compress');
+    return null;
   }
 
   try {
-    console.log(`Compressing ${shortTermBuffer.length} memories...`);
+    // Get the most recent compressed memory first
+    const recentCompressed = await getRecentCompressedMemories(projectId, 24);
+    const lastCompressedMemory = recentCompressed.length > 0 
+      ? recentCompressed.sort((a, b) => b.timestamp - a.timestamp)[0]
+      : null;
 
-    // Sort memories by importance
-    const sortedMemories = shortTermBuffer.sort(
-      (a, b) => b.importance - a.importance
-    );
+    console.log('Recent compressed memory found:', lastCompressedMemory ? 'yes' : 'no');
 
-    // Prepare memories while tracking tokens
-    let currentTokens = 0;
-    const memoriesToCompress = [];
-    const template = `Memory X (Importance: Y):\nContent\n\n`;
-    const templateTokens = estimateTokens(template);
+    // Take the oldest memories up to SHORT_TERM limit
+    const rawMemoriesToCompress = [...shortTermBuffer]
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .slice(0, TOKEN_LIMITS.SHORT_TERM);
 
-    // Reserve tokens for the prompt template and expected output
-    const promptOverhead = estimateTokens(`
-Create a comprehensive summary that:
-1. Identifies main themes
-2. Preserves important details
-3. Shows relationships
-4. Highlights insights
-5. Maintains chronological order
+    console.log('Selected raw memories for compression:', rawMemoriesToCompress.length);
 
-Format as:
-SUMMARY:
-[Overview]
+    // Calculate available tokens
+    const availableInputTokens = TOKEN_LIMITS.NANO_AVAILABLE - 
+      TOKEN_LIMITS.PROMPT_RESERVE - 
+      TOKEN_LIMITS.OUTPUT_RESERVE;
 
-KEY POINTS:
-- Points
-
-RELATIONSHIPS:
-- Relations
-
-DETAILS:
-- Details
-    `);
-
-    const availableTokens = TOKEN_LIMITS.NANO_AVAILABLE - promptOverhead;
-    console.log(`Available tokens for memories: ${availableTokens}`);
-
-    for (const memory of sortedMemories) {
-      // Extract the actual content without metadata
-      const contentParts = memory.content.split("\n\n");
-      const mainContent = contentParts[0].split("\n").slice(1).join("\n");
-
-      const memoryText = `Memory ${
-        memoriesToCompress.length + 1
-      } (Importance: ${memory.importance}):\n${mainContent}`;
-      const memoryTokens = estimateTokens(memoryText) + templateTokens;
-
-      if (currentTokens + memoryTokens > availableTokens) {
-        console.log(
-          `Token limit reached at ${currentTokens} tokens. Processing batch.`
-        );
-        break;
-      }
-
-      memoriesToCompress.push({
-        text: memoryText,
-        originalMemory: memory,
-      });
-      currentTokens += memoryTokens;
+    // Prepare input with minimal formatting, including the last compressed memory if available
+    let compressionInput = '';
+    
+    if (lastCompressedMemory) {
+      const parsedLastCompressed = parseCompressedContent(lastCompressedMemory.content);
+      compressionInput = `Previous Summary [${lastCompressedMemory.importance}]:\n${
+        parsedLastCompressed.summary
+      }\n\nNew Memories to Integrate:\n`;
     }
 
-    console.log(
-      `Processing ${memoriesToCompress.length} memories with ~${currentTokens} tokens`
-    );
+    compressionInput += rawMemoriesToCompress
+      .map((m, i) => `M${i + 1}[${m.importance}]: ${
+        m.content.split('\n\n')[0].split('\n').slice(1).join('\n')
+      }`)
+      .join('\n\n');
 
-    // Use AI for compression with a clear structure
+    console.log('Preparing to compress memories with input length:', compressionInput.length);
     const summarizer = await ai.summarizer.create();
-    const compressedContent = await summarizer.summarize(
-      `Compress these related memories into a meaningful summary:
+    
+    const promptText = lastCompressedMemory 
+      ? `${compressionInput}\n\nCreate an updated synthesis that integrates the previous summary with new memories. Format as:\nSUMMARY:\n[core insights]\nKEY POINTS:\n[bullets]\nRELATIONSHIPS:\n[links]\nDETAILS:\n[specifics]`
+      : `${compressionInput}\n\nSynthesize concisely:\nSUMMARY:\n[core insights]\nKEY POINTS:\n[bullets]\nRELATIONSHIPS:\n[links]\nDETAILS:\n[specifics]`;
 
-${memoriesToCompress.map((m) => m.text).join("\n\n")}
-
-Create a comprehensive summary that:
-1. Identifies main themes
-2. Preserves important details
-3. Shows relationships
-4. Highlights insights
-5. Maintains chronological order
-
-Format as:
-SUMMARY:
-[Overview]
-
-KEY POINTS:
-- Points
-
-RELATIONSHIPS:
-- Relations
-
-DETAILS:
-- Details`
-    );
-
-    // Add metadata to the compressed content
-    const timestamp = new Date().toISOString();
-    const finalContent = `[${timestamp}] COMPRESSED MEMORY (${
-      memoriesToCompress.length
-    } memories)
-
-${compressedContent}
-
-Source Memories:
-${memoriesToCompress
-  .map((m, i) => `${i + 1}. ${m.originalMemory.content.split("\n")[1]}`)
-  .join("\n")}`;
-
+    const compressedContent = await summarizer.summarize(promptText);
     summarizer.destroy();
 
-    // Store the compressed memory
+    // Create compressed memory with enhanced source tracking
+    const timestamp = new Date().toISOString();
+    const finalContent = `[${timestamp}] COMPRESSED MEMORY\n\n${compressedContent}\n\nSource Memories:\n${
+      rawMemoriesToCompress
+        .map((m, i) => `${i + 1}. [RAW] ${m.content.split('\n')[1]}`)
+        .concat(
+          lastCompressedMemory 
+            ? [`${rawMemoriesToCompress.length + 1}. [COMPRESSED] Previous summary with ${
+              parseCompressedContent(lastCompressedMemory.content).sourceMemories?.split('\n').length || 0
+            } source memories`]
+            : []
+        )
+        .join('\n')
+    }`;
+
     const compressedMemory = await storeMemory({
       content: finalContent,
       projectId,
       timestamp: Date.now(),
-      type: "compressed",
+      type: 'compressed',
       importance: Math.max(
-        ...memoriesToCompress.map((m) => m.originalMemory.importance)
+        ...rawMemoriesToCompress.map(m => m.importance),
+        lastCompressedMemory?.importance || 0
       ),
-      sourceCount: memoriesToCompress.length,
+      metadata: {
+        sourceCount: rawMemoriesToCompress.length + (lastCompressedMemory ? 1 : 0),
+        includesCompressed: !!lastCompressedMemory,
+        previousCompressedId: lastCompressedMemory?.id,
+        sourcesTimestamp: {
+          oldest: Math.min(...rawMemoriesToCompress.map(m => m.timestamp)),
+          newest: Math.max(...rawMemoriesToCompress.map(m => m.timestamp))
+        }
+      }
     });
 
-    // Remove compressed memories from buffer
-    shortTermBuffer = sortedMemories.slice(memoriesToCompress.length);
+    // Remove compressed raw memories from buffer
+    const compressedTimestamps = new Set(rawMemoriesToCompress.map(m => m.timestamp));
+    shortTermBuffer = shortTermBuffer.filter(m => !compressedTimestamps.has(m.timestamp));
+    
+    console.log('Compression complete');
+    console.log('New buffer size:', shortTermBuffer.length);
 
-    // If we still have memories in the buffer, process them too
+    // Check if we need another compression cycle
     if (shortTermBuffer.length >= TOKEN_LIMITS.SHORT_TERM) {
-      console.log(
-        `${shortTermBuffer.length} memories remaining in buffer, continuing compression...`
-      );
+      console.log('Buffer still full, triggering another compression cycle');
       await compressShortTermMemory(projectId);
     }
 
     return compressedMemory;
   } catch (error) {
-    console.error("Error compressing memories:", error);
-    // Fallback to basic compression, still respecting token limits
-    const timestamp = new Date().toISOString();
-    const sortedMemories = shortTermBuffer
-      .sort((a, b) => b.importance - a.importance)
-      .slice(
-        0,
-        Math.floor(
-          TOKEN_LIMITS.NANO_AVAILABLE / TOKEN_LIMITS.CHARS_PER_TOKEN / 100
-        )
-      ); // Conservative estimate
+    console.error('Compression error:', error);
+    return null;
+  }
+}
 
-    const bufferContent = `[${timestamp}] COMPRESSED MEMORIES
+function selectMemoriesWithinTokenLimit(memories, tokenLimit) {
+  let selectedMemories = [];
+  let currentTokens = 0;
+
+  // Sort by importance and recency
+  const sortedMemories = [...memories].sort((a, b) => {
+    const timeDiff = b.timestamp - a.timestamp;
+    const importanceDiff = b.importance - a.importance;
+    return importanceDiff !== 0 ? importanceDiff : timeDiff;
+  });
+
+  for (const memory of sortedMemories) {
+    const tokens = estimateTokens(memory.content);
+    if (currentTokens + tokens <= tokenLimit) {
+      selectedMemories.push(memory);
+      currentTokens += tokens;
+    } else {
+      break;
+    }
+  }
+
+  return selectedMemories;
+}
+
+function selectCompressedMemories(compressedMemories, availableTokens, maxTokensPerMemory) {
+  let selected = [];
+  let currentTokens = 0;
+
+  // Sort by importance and recency
+  const sortedMemories = compressedMemories
+    .sort((a, b) => b.importance - a.importance || b.timestamp - a.timestamp);
+
+  for (const memory of sortedMemories) {
+    const parsed = parseCompressedContent(memory.content);
+    const summaryTokens = estimateTokens(parsed.summary);
+    
+    if (summaryTokens <= maxTokensPerMemory && 
+        currentTokens + summaryTokens <= availableTokens) {
+      selected.push({
+        memory,
+        summaryTokens
+      });
+      currentTokens += summaryTokens;
+    }
+  }
+
+  return selected;
+}
+
+function prepareCompressionInput(rawMemories, compressedMemories) {
+  // Format raw memories concisely
+  const rawParts = rawMemories.map((memory, i) => 
+    `M${i + 1}[${memory.importance}]: ${
+      memory.content.split('\n\n')[0].split('\n').slice(1).join('\n')
+    }`
+  );
+
+  // Format compressed memories concisely
+  const compressedParts = compressedMemories.map(({ memory }, i) => {
+    const parsed = parseCompressedContent(memory.content);
+    return `CS${i + 1}[${memory.importance}]: ${parsed.summary}`;
+  });
+
+  return [...rawParts, ...compressedParts].join('\n\n');
+}
+
+function updateShortTermBuffer(processedMemories) {
+  // Get timestamps of processed memories
+  const processedTimestamps = new Set(
+    processedMemories.map(m => m.timestamp)
+  );
+
+  console.log('Updating buffer:', {
+    beforeSize: shortTermBuffer.length,
+    processedCount: processedMemories.length,
+    processedTimestamps: Array.from(processedTimestamps)
+  });
+
+  // Remove processed memories from buffer
+  shortTermBuffer = shortTermBuffer.filter(memory => 
+    !processedTimestamps.has(memory.timestamp)
+  );
+
+  console.log('Buffer updated:', {
+    afterSize: shortTermBuffer.length,
+    remainingMemories: shortTermBuffer.map(m => ({
+      timestamp: m.timestamp,
+      importance: m.importance
+    }))
+  });
+}
+
+// Estimate tokens for an array of memories
+function estimateTokensForMemories(memories) {
+  return memories.reduce((total, memory) => {
+    const contentTokens = estimateTokens(memory.content);
+    const metadataTokens = estimateTokens(`Memory ${memory.importance}:\n`);
+    return total + contentTokens + metadataTokens;
+  }, 0);
+}
+
+// Parse compressed content structure
+function parseCompressedContent(content) {
+  const timestampMatch = content.match(/\[(.*?)\]/);
+  const sections = {
+    summary: content.match(/SUMMARY:\s*(.*?)(?=\s*KEY POINTS:|$)/s)?.[1]?.trim(),
+    keyPoints: content.match(/KEY POINTS:\s*(.*?)(?=\s*RELATIONSHIPS:|$)/s)?.[1]?.trim(),
+    relationships: content.match(/RELATIONSHIPS:\s*(.*?)(?=\s*DETAILS:|$)/s)?.[1]?.trim(),
+    details: content.match(/DETAILS:\s*(.*?)(?=\s*Source Memories:|$)/s)?.[1]?.trim(),
+    sourceMemories: content.match(/Source Memories:\s*(.*?)$/s)?.[1]?.trim()
+  };
+
+  return {
+    timestamp: timestampMatch ? timestampMatch[1] : '',
+    ...sections
+  };
+}
+
+// Fallback compression for raw memories only
+async function compressRawMemoriesOnly(memories, projectId) {
+  if (!memories.length) return null;
+
+  const timestamp = new Date().toISOString();
+  const summarizer = await ai.summarizer.create();
+  
+  try {
+    const input = memories.map((m, i) => 
+      `Memory ${i + 1} (Importance: ${m.importance}):\n${
+        m.content.split('\n\n')[0].split('\n').slice(1).join('\n')
+      }`
+    ).join('\n\n');
+
+    const compressedContent = await summarizer.summarize(
+      `${input}\n\nCreate a concise synthesis. Format as:\n` +
+      `SUMMARY:\n[Core insights]\n\nKEY POINTS:\n[Bullet points]\n\n` +
+      `RELATIONSHIPS:\n[Connections]\n\nDETAILS:\n[Important specifics]`
+    );
+
+    return await createCompressedMemory(
+      compressedContent,
+      memories,
+      [],
+      projectId
+    );
+  } catch (error) {
+    console.error('Error in raw compression:', error);
+    return await fallbackCompression(memories, projectId);
+  } finally {
+    summarizer.destroy();
+  }
+}
+
+// Create compressed memory with proper metadata
+async function createCompressedMemory(compressedContent, rawMemories, compressedMemories, projectId) {
+  const timestamp = new Date().toISOString();
+  const finalContent = `[${timestamp}] COMPRESSED MEMORY\n\n${compressedContent}\n\nSource Memories:\n${
+    rawMemories
+      .map((m, i) => `${i + 1}. [RAW] ${m.content.split('\n')[1]}`)
+      .concat(
+        compressedMemories.map(({ memory }, i) => 
+          `${rawMemories.length + i + 1}. [COMPRESSED] ${
+            parseCompressedContent(memory.content).summary?.split('\n')[0]
+          }`
+        )
+      )
+      .join('\n')
+  }`;
+
+  return await storeMemory({
+    content: finalContent,
+    projectId,
+    timestamp: Date.now(),
+    type: 'compressed',
+    importance: Math.max(
+      ...rawMemories.map(m => m.importance),
+      ...compressedMemories.map(({ memory }) => memory.importance)
+    ),
+    metadata: {
+      rawCount: rawMemories.length,
+      compressedCount: compressedMemories.length,
+      sourcesTimestamp: {
+        oldest: Math.min(
+          ...rawMemories.map(m => m.timestamp),
+          ...compressedMemories.map(({ memory }) => memory.timestamp)
+        ),
+        newest: Math.max(
+          ...rawMemories.map(m => m.timestamp),
+          ...compressedMemories.map(({ memory }) => memory.timestamp)
+        )
+      }
+    }
+  });
+}
+
+// Get recent compressed memories
+async function getRecentCompressedMemories(projectId, hoursAgo = 24) {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('orma-db', 1);
+
+    request.onsuccess = (event) => {
+      const db = event.target.result;
+      const transaction = db.transaction(['memories'], 'readonly');
+      const store = transaction.objectStore('memories');
+      const index = store.index('projectId');
+
+      const request = index.getAll(projectId);
+      request.onsuccess = () => {
+        const allMemories = request.result;
+        const cutoffTime = Date.now() - (hoursAgo * 60 * 60 * 1000);
+        
+        const recentCompressed = allMemories.filter(memory => 
+          memory.type === 'compressed' && 
+          memory.timestamp >= cutoffTime
+        );
+        
+        resolve(recentCompressed);
+      };
+      request.onerror = () => reject(request.error);
+    };
+
+    request.onerror = () => reject(request.error);
+  });
+}
+
+// Fallback compression when AI compression fails
+async function fallbackCompression(memories, projectId) {
+  const timestamp = new Date().toISOString();
+  const sortedMemories = memories
+    .sort((a, b) => b.importance - a.importance)
+    .slice(0, Math.min(memories.length, 5)); // Take top 5 most important
+
+  const content = `[${timestamp}] COMPRESSED MEMORY
 
 SUMMARY:
-Combined ${sortedMemories.length} related memories.
+Combined ${sortedMemories.length} related memories for project ${projectId}.
 
-CONTENTS:
-${sortedMemories
-  .map((m, i) => `Memory ${i + 1} (Importance: ${m.importance}):\n${m.content}`)
-  .join("\n\n---\n\n")}`;
+KEY POINTS:
+${sortedMemories.map(m => `- ${m.content.split('\n')[1]}`).join('\n')}
 
-    const compressedMemory = await storeMemory({
-      content: bufferContent,
-      projectId,
-      timestamp: Date.now(),
-      type: "compressed",
-      importance: Math.max(...sortedMemories.map((m) => m.importance)),
-      sourceCount: sortedMemories.length,
-    });
+RELATIONSHIPS:
+- Memories collected within same time period
+- Similar importance levels
 
-    // Remove compressed memories from buffer
-    shortTermBuffer = shortTermBuffer.slice(sortedMemories.length);
+DETAILS:
+Fallback compression due to processing constraints.
 
-    // If we still have memories in buffer, continue compression
-    if (shortTermBuffer.length >= TOKEN_LIMITS.SHORT_TERM) {
-      await compressShortTermMemory(projectId);
+Source Memories:
+${sortedMemories.map((m, i) => `${i + 1}. ${m.content.split('\n')[1]}`).join('\n')}`;
+
+  return await storeMemory({
+    content,
+    projectId,
+    timestamp: Date.now(),
+    type: 'compressed',
+    importance: Math.max(...sortedMemories.map(m => m.importance)),
+    metadata: {
+      rawCount: sortedMemories.length,
+      compressedCount: 0,
+      sourcesTimestamp: {
+        oldest: Math.min(...sortedMemories.map(m => m.timestamp)),
+        newest: Math.max(...sortedMemories.map(m => m.timestamp))
+      }
     }
-
-    return compressedMemory;
-  }
+  });
 }
 
 async function formRootMemory(projectId, memories) {
