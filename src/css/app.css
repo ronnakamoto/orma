@@ -1,6 +1,14 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
 @import "tailwindcss/base";
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
+
+/* Base styles */
+body {
+    font-family: 'Space Grotesk', sans-serif;
+}
+
 
 /* Custom animations */
 @keyframes fadeIn {
@@ -93,3 +101,28 @@
 .hover-lift:hover {
   transform: translateY(-2px);
 }
+
+/* Space Grotesk specific styles */
+.font-space-grotesk {
+    font-family: 'Space Grotesk', sans-serif;
+  }
+  
+  .font-light {
+    font-weight: 300;
+  }
+  
+  .font-normal {
+    font-weight: 400;
+  }
+  
+  .font-medium {
+    font-weight: 500;
+  }
+  
+  .font-semibold {
+    font-weight: 600;
+  }
+  
+  .font-bold {
+    font-weight: 700;
+  }

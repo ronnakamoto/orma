@@ -15,7 +15,7 @@ const notificationRoot = createRoot(notificationContainer);
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'SHOW_NOTIFICATION') {
     notificationRoot.render(
-      <Notification message={message.message} />
+      <Notification message={message.message} type={message.style} duration={3000} />
     );
   }
 });

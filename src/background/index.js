@@ -479,15 +479,15 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       );
 
       if (!currentProjectId) {
-        await showNotification(tab, "Please select a project in Orma first");
+        await showNotification(tab, "Please select a project in Orma first", "error");
         return;
       }
 
       await addMemory(info.selectionText, currentProjectId);
-      await showNotification(tab, "Added to Orma memory!");
+      await showNotification(tab, "Added to Orma memory!", "success");
     } catch (error) {
       console.error("Error saving memory:", error);
-      await showNotification(tab, "Error saving to Orma: " + error.message);
+      await showNotification(tab, "Error saving to Orma: " + error.message, "error");
     }
   }
 });

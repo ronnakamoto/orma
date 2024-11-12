@@ -154,7 +154,7 @@ export default function Popup() {
     }
 
     return (
-        <div className="w-[400px] h-[600px] bg-gray-50 text-gray-900 font-sans overflow-hidden">
+        <div className="w-[400px] h-[600px] bg-gray-50 text-gray-900 font-space-grotesk overflow-hidden">
             <header className="bg-white shadow-sm px-6 py-4 flex items-center justify-between">
                 <h1 className="text-2xl font-semibold bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent">Orma</h1>
                 <button
