@@ -11,6 +11,8 @@ const TOKEN_LIMITS = {
   OUTPUT_RESERVE: 300,    // Reserve tokens for expected output structure
 };
 
+import db from '../services/db';
+
 function estimateTokens(text) {
   return Math.ceil(text.length / TOKEN_LIMITS.CHARS_PER_TOKEN);
 }
@@ -20,9 +22,8 @@ let shortTermBuffer = [];
 // Initialize IndexedDB when extension is installed
 chrome.runtime.onInstalled.addListener(async () => {
   try {
-    await initializeDB();
     await initializeContextMenu();
-    console.log("Orma: Database and context menu initialized");
+    console.log("Orma: Context menu initialized");
   } catch (error) {
     console.error("Error initializing Orma:", error);
   }
@@ -33,39 +34,6 @@ async function initializeContextMenu() {
     id: "save-to-orma",
     title: "Save to Orma",
     contexts: ["selection"],
-  });
-}
-
-async function initializeDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open("orma-db", 1);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve();
-
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-
-      if (!db.objectStoreNames.contains("memories")) {
-        const memoriesStore = db.createObjectStore("memories", {
-          keyPath: "id",
-          autoIncrement: true,
-        });
-        memoriesStore.createIndex("projectId", "projectId");
-        memoriesStore.createIndex("timestamp", "timestamp");
-        memoriesStore.createIndex("type", "type");
-        memoriesStore.createIndex("importance", "importance");
-      }
-
-      if (!db.objectStoreNames.contains("projects")) {
-        const projectsStore = db.createObjectStore("projects", {
-          keyPath: "id",
-          autoIncrement: true,
-        });
-        projectsStore.createIndex("name", "name");
-        projectsStore.createIndex("created", "created");
-      }
-    };
   });
 }
 
@@ -492,32 +460,12 @@ async function createCompressedMemory(compressedContent, rawMemories, compressed
 
 // Get recent compressed memories
 async function getRecentCompressedMemories(projectId, hoursAgo = 24) {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open('orma-db', 1);
-
-    request.onsuccess = (event) => {
-      const db = event.target.result;
-      const transaction = db.transaction(['memories'], 'readonly');
-      const store = transaction.objectStore('memories');
-      const index = store.index('projectId');
-
-      const request = index.getAll(projectId);
-      request.onsuccess = () => {
-        const allMemories = request.result;
-        const cutoffTime = Date.now() - (hoursAgo * 60 * 60 * 1000);
-        
-        const recentCompressed = allMemories.filter(memory => 
-          memory.type === 'compressed' && 
-          memory.timestamp >= cutoffTime
-        );
-        
-        resolve(recentCompressed);
-      };
-      request.onerror = () => reject(request.error);
-    };
-
-    request.onerror = () => reject(request.error);
-  });
+  try {
+    return await db.getRecentCompressedMemories(projectId, hoursAgo);
+  } catch (error) {
+    console.error('Error getting recent compressed memories:', error);
+    throw error;
+  }
 }
 
 // Fallback compression when AI compression fails
@@ -605,58 +553,31 @@ async function formRootMemory(projectId, memories) {
 }
 
 async function storeMemory(memory) {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open("orma-db", 1);
-
-    request.onsuccess = (event) => {
-      const db = event.target.result;
-      const transaction = db.transaction(["memories"], "readwrite");
-      const store = transaction.objectStore("memories");
-
-      const request = store.add(memory);
-      request.onsuccess = () => resolve({ ...memory, id: request.result });
-      request.onerror = () => reject(request.error);
-    };
-
-    request.onerror = () => reject(request.error);
-  });
+  try {
+    const id = await db.addMemory(memory);
+    return id;
+  } catch (error) {
+    console.error('Error storing memory:', error);
+    throw error;
+  }
 }
 
 async function getAllMemories(projectId) {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open("orma-db", 1);
-
-    request.onsuccess = (event) => {
-      const db = event.target.result;
-      const transaction = db.transaction(["memories"], "readonly");
-      const store = transaction.objectStore("memories");
-      const index = store.index("projectId");
-
-      const request = index.getAll(projectId);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    };
-
-    request.onerror = () => reject(request.error);
-  });
+  try {
+    return await db.getAllMemories(projectId);
+  } catch (error) {
+    console.error('Error getting memories:', error);
+    throw error;
+  }
 }
 
 async function getProject(projectId) {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open("orma-db", 1);
-
-    request.onsuccess = (event) => {
-      const db = event.target.result;
-      const transaction = db.transaction(["projects"], "readonly");
-      const store = transaction.objectStore("projects");
-
-      const request = store.get(projectId);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    };
-
-    request.onerror = () => reject(request.error);
-  });
+  try {
+    return await db.getProject(projectId);
+  } catch (error) {
+    console.error('Error getting project:', error);
+    throw error;
+  }
 }
 
 // Context Menu Handler

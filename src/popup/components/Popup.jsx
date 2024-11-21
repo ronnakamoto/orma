@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
 import Memory from './Memory';
 import { aiService } from '../../services/aiService';
+import db from '../../services/db';
 
 export default function Popup() {
     const [projects, setProjects] = useState([]);
@@ -41,24 +42,14 @@ export default function Popup() {
 
     async function loadProjects() {
         try {
-            const db = await openDB();
-            const transaction = db.transaction(['projects'], 'readonly');
-            const store = transaction.objectStore('projects');
-            const request = store.getAll();
-
-            request.onsuccess = () => {
-                setProjects(request.result);
-                chrome.storage.local.get('currentProjectId', ({ currentProjectId }) => {
-                    if (currentProjectId) {
-                        const project = request.result.find(p => p.id === currentProjectId);
-                        if (project) setCurrentProject(project);
-                    }
-                });
-            };
-
-            request.onerror = () => {
-                console.error('Error loading projects:', request.error);
-            };
+            const projects = await getProjects();
+            setProjects(projects);
+            chrome.storage.local.get('currentProjectId', ({ currentProjectId }) => {
+                if (currentProjectId) {
+                    const project = projects.find(p => p.id === currentProjectId);
+                    if (project) setCurrentProject(project);
+                }
+            });
         } catch (error) {
             console.error('Error loading projects:', error);
         } finally {
@@ -68,19 +59,8 @@ export default function Popup() {
 
     async function loadMemories(projectId) {
         try {
-            const db = await openDB();
-            const transaction = db.transaction(['memories'], 'readonly');
-            const store = transaction.objectStore('memories');
-            const index = store.index('projectId');
-            const request = index.getAll(projectId);
-
-            request.onsuccess = () => {
-                setMemories(request.result.sort((a, b) => b.timestamp - a.timestamp));
-            };
-
-            request.onerror = () => {
-                console.error('Error loading memories:', request.error);
-            };
+            const memories = await db.memories.where('projectId').equals(projectId).toArray();
+            setMemories(memories.sort((a, b) => b.timestamp - a.timestamp));
         } catch (error) {
             console.error('Error loading memories:', error);
         }
@@ -91,18 +71,8 @@ export default function Popup() {
         if (!name) return;
 
         try {
-            const db = await openDB();
-            const transaction = db.transaction(['projects'], 'readwrite');
-            const store = transaction.objectStore('projects');
-            
-            const request = store.add({
-                name,
-                created: Date.now()
-            });
-
-            request.onsuccess = () => {
-                loadProjects();
-            };
+            const project = await createProject(name);
+            setProjects([...projects, project]);
         } catch (error) {
             console.error('Error creating project:', error);
         }
@@ -112,15 +82,8 @@ export default function Popup() {
         if (!confirm('Are you sure you want to delete this memory?')) return;
 
         try {
-            const db = await openDB();
-            const transaction = db.transaction(['memories'], 'readwrite');
-            const store = transaction.objectStore('memories');
-            
-            const request = store.delete(memoryId);
-
-            request.onsuccess = () => {
-                setMemories(memories.filter(m => m.id !== memoryId));
-            };
+            await db.memories.delete(memoryId);
+            setMemories(memories.filter(m => m.id !== memoryId));
         } catch (error) {
             console.error('Error deleting memory:', error);
         }
@@ -130,19 +93,7 @@ export default function Popup() {
         if (!confirm('Are you sure you want to delete this project and all its memories?')) return;
 
         try {
-            const db = await openDB();
-            const transaction = db.transaction(['projects', 'memories'], 'readwrite');
-            const projectStore = transaction.objectStore('projects');
-            const memoryStore = transaction.objectStore('memories');
-            
-            await projectStore.delete(projectId);
-            
-            const memoryIndex = memoryStore.index('projectId');
-            const memories = await memoryIndex.getAll(projectId);
-            for (const memory of memories) {
-                await memoryStore.delete(memory.id);
-            }
-
+            await deleteProject(projectId);
             setProjects(projects.filter(p => p.id !== projectId));
             if (currentProject?.id === projectId) {
                 setCurrentProject(null);
@@ -226,32 +177,37 @@ export default function Popup() {
     );
 }
 
-async function openDB() {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open('orma-db', 1);
-        
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-        
-        request.onupgradeneeded = (event) => {
-            const db = event.target.result;
-            
-            if (!db.objectStoreNames.contains('projects')) {
-                const projectStore = db.createObjectStore('projects', {
-                    keyPath: 'id',
-                    autoIncrement: true
-                });
-                projectStore.createIndex('name', 'name');
-            }
+async function getProjects() {
+    try {
+        const projects = await db.projects.toArray();
+        return projects;
+    } catch (error) {
+        console.error('Error getting projects:', error);
+        throw error;
+    }
+}
 
-            if (!db.objectStoreNames.contains('memories')) {
-                const memoriesStore = db.createObjectStore('memories', {
-                    keyPath: 'id',
-                    autoIncrement: true
-                });
-                memoriesStore.createIndex('projectId', 'projectId');
-                memoriesStore.createIndex('timestamp', 'timestamp');
-            }
+async function createProject(name) {
+    try {
+        const project = {
+            name,
+            created: Date.now()
         };
-    });
+        const id = await db.projects.add(project);
+        return { ...project, id };
+    } catch (error) {
+        console.error('Error creating project:', error);
+        throw error;
+    }
+}
+
+async function deleteProject(projectId) {
+    try {
+        await db.projects.delete(projectId);
+        // Also delete all memories associated with this project
+        await db.memories.where('projectId').equals(projectId).delete();
+    } catch (error) {
+        console.error('Error deleting project:', error);
+        throw error;
+    }
 }
