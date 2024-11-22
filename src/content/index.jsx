@@ -15,13 +15,14 @@ const notificationRoot = createRoot(notificationContainer);
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'SHOW_NOTIFICATION') {
     notificationRoot.render(
-      <Notification message={message.message} />
+      <Notification message={message.message} type={message.style} duration={3000} />
     );
   }
 });
 
 // Only inject on ChatGPT or Claude
 if (window.location.hostname.includes('chat.openai.com') || 
+window.location.hostname.includes('chatgpt.com') ||
     window.location.hostname.includes('claude.ai')) {
   
   const textArea = document.querySelector('textarea');
