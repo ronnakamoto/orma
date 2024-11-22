@@ -12,6 +12,7 @@ const TOKEN_LIMITS = {
 };
 
 import db from '../services/db';
+import { vectorService } from '../services/vectorService';
 
 function estimateTokens(text) {
   return Math.ceil(text.length / TOKEN_LIMITS.CHARS_PER_TOKEN);
@@ -22,6 +23,12 @@ let shortTermBuffer = [];
 // Initialize IndexedDB when extension is installed
 chrome.runtime.onInstalled.addListener(async () => {
   try {
+    // Initialize vector service
+    const setting = await db.getSetting('openai_api_key');
+    if (setting?.value) {
+      await vectorService.initialize(setting.value);
+    }
+    
     await initializeContextMenu();
     console.log("Orma: Context menu initialized");
   } catch (error) {
@@ -264,7 +271,113 @@ async function compressShortTermMemory(projectId) {
   }
 }
 
-function selectMemoriesWithinTokenLimit(memories, tokenLimit) {
+async function compressMemories(memories, projectId) {
+  try {
+    const timestamp = new Date().toISOString();
+    const summarizer = await ai.summarizer.create();
+    
+    // Group memories by semantic similarity
+    const groups = [];
+    const assigned = new Set();
+
+    for (const memory of memories) {
+      if (assigned.has(memory.id)) continue;
+
+      try {
+        const similar = await vectorService.findSimilarMemories(
+          memory.content,
+          projectId
+        );
+        
+        const group = [memory];
+        assigned.add(memory.id);
+
+        for (const similarMemory of similar) {
+          if (!assigned.has(similarMemory.id)) {
+            group.push(similarMemory);
+            assigned.add(similarMemory.id);
+          }
+        }
+
+        if (group.length > 1) {
+          groups.push(group);
+        }
+      } catch (error) {
+        console.error('Error finding similar memories:', error);
+        // If vector search fails, just use the single memory
+        if (!assigned.has(memory.id)) {
+          groups.push([memory]);
+          assigned.add(memory.id);
+        }
+      }
+    }
+
+    // Compress each group
+    const compressedMemories = await Promise.all(
+      groups.map(async (group) => {
+        const content = group
+          .map(m => m.content)
+          .join('\n\n');
+
+        const summary = await summarizer.summarize(
+          `Synthesize these related memories:\n\n${content}\n\n` +
+          `Format as:\nSUMMARY:\n[core insights]\nKEY POINTS:\n[bullets]\n` +
+          `RELATIONSHIPS:\n[links]\nDETAILS:\n[specifics]`
+        );
+
+        return {
+          projectId,
+          content: summary,
+          timestamp,
+          type: 'compressed',
+          importance: Math.max(...group.map(m => m.importance || 0)),
+          metadata: {
+            sourceIds: group.map(m => m.id),
+            compressionType: 'semantic'
+          }
+        };
+      })
+    );
+
+    summarizer.destroy();
+    return compressedMemories;
+  } catch (error) {
+    console.error('Error in semantic compression:', error);
+    throw error;
+  }
+}
+
+async function storeMemory(memory) {
+  try {
+    const id = await db.addMemory(memory);
+    const storedMemory = { ...memory, id };
+
+    // Generate and store embedding
+    try {
+      const embedding = await vectorService.generateEmbedding(memory.content);
+      await db.updateMemory(id, {
+        ...storedMemory,
+        metadata: {
+          ...storedMemory.metadata,
+          embedding
+        }
+      });
+
+      // Update graph connections in the background
+      vectorService.buildGraphConnections(memory.projectId).catch(console.error);
+    } catch (error) {
+      console.error('Error generating embedding:', error);
+      // Don't throw here, we still want to store the memory even if embedding fails
+    }
+
+    return storedMemory;
+  } catch (error) {
+    console.error('Error storing memory:', error);
+    throw error;
+  }
+}
+
+async function selectMemoriesWithinTokenLimit(memories, tokenLimit) {
   let selectedMemories = [];
   let currentTokens = 0;
 
@@ -549,16 +662,6 @@ async function formRootMemory(projectId, memories) {
       type: "root",
       importance: 10,
     });
-  }
-}
-
-async function storeMemory(memory) {
-  try {
-    const id = await db.addMemory(memory);
-    return id;
-  } catch (error) {
-    console.error('Error storing memory:', error);
-    throw error;
   }
 }
 
