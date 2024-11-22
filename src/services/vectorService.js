@@ -190,6 +190,61 @@ class VectorService {
       throw error;
     }
   }
+
+  async generateChatResponse(query, context, projectId) {
+    if (!this.openai) {
+      throw new Error('Vector service not initialized');
+    }
+
+    try {
+      const project = await db.getProject(projectId);
+      const projectName = project?.name || 'this project';
+
+      // Prepare context from similar and connected memories
+      const contextMemories = [
+        ...context.similar,
+        ...context.connected
+      ];
+
+      const contextText = contextMemories
+        .map(m => `[Memory ${m.id}]: ${m.content}`)
+        .join('\n\n');
+
+      const response = await this.openai.chat.completions.create({
+        model: "gpt-4-1106-preview",
+        messages: [
+          {
+            role: "system",
+            content: `You are a helpful and knowledgeable assistant for ${projectName}. 
+            You have access to the project's memories and context.
+            When responding:
+            1. Base your responses on the provided context memories
+            2. Cite specific memories using their ID (e.g., [Memory 123])
+            3. If you're unsure about something, acknowledge the limitations of your knowledge
+            4. Keep responses concise but informative
+            5. Maintain a friendly, conversational tone while being professional`
+          },
+          {
+            role: "user",
+            content: `Context memories:\n${contextText}\n\nUser question: ${query}`
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 500
+      });
+
+      return {
+        content: response.choices[0].message.content,
+        sources: contextMemories.map(m => ({
+          id: m.id,
+          preview: m.content.slice(0, 150) + (m.content.length > 150 ? '...' : '')
+        }))
+      };
+    } catch (error) {
+      console.error('Error generating chat response:', error);
+      throw error;
+    }
+  }
 }
 
 export const vectorService = new VectorService();
