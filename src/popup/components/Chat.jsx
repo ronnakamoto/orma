@@ -97,7 +97,7 @@ const Message = ({ message, onInjectContext }) => {
 
   return (
     <div className={`message ${message.role}`}>
-      <div className="message-header">
+      <div className="message-header p-2">
         {message.isContext && <div className="context-label">Generated Context</div>}
         <div className="message-actions">
           <button 
