@@ -66,22 +66,11 @@ function debugLog(stage, message, data = null) {
 
 // Process content using AI writer
 async function processWithAI(content) {
-  debugLog('AI Processing', 'Starting AI content processing', { 
-    contentLength: content.length,
-    wordCount: content.split(/\s+/).length
-  });
-  
   try {
-    if (typeof ai === 'undefined') {
-      debugLog('AI Processing', 'ai object is not available', { aiExists: false });
-      return content;
-    }
-    
-    if (!ai.writer) {
+    if (!ai?.writer) {
       debugLog('AI Processing', 'ai.writer is not available', { 
-        aiExists: true, 
-        writerExists: false,
-        aiKeys: Object.keys(ai)
+        aiExists: !!ai, 
+        writerExists: false
       });
       return content;
     }
@@ -89,86 +78,133 @@ async function processWithAI(content) {
     debugLog('AI Processing', 'Creating AI writer instance');
     const writer = await ai.writer.create();
     
-    try {
-      debugLog('AI Processing', 'Processing content', {
-        inputLength: content.length,
-        wordCount: content.split(/\s+/).length
+    // Split content into chunks if it exceeds the token limit
+    const chunks = splitIntoChunks(content, TOKEN_LIMITS.NANO_CONTEXT);
+    let processedChunks = [];
+
+    for (const chunk of chunks) {
+      debugLog('AI Processing', 'Processing content chunk', {
+        chunkLength: chunk.length,
+        wordCount: chunk.split(/\s+/).length
       });
 
       const context = 
-        "You are creating a concise, informative memory of this webpage content. " +
-        "Focus on extracting the key information while maintaining accuracy. " +
-        "Format the output as follows:\n\n" +
-        "TITLE: A clear, descriptive title that captures the main topic\n\n" +
-        "SUMMARY: A concise 2-3 sentence overview of the main content\n\n" +
-        "KEY POINTS:\n" +
-        "- List the most important points\n" +
-        "- Include specific details, numbers, or quotes if relevant\n" +
-        "- Focus on unique, substantive information\n\n" +
-        "CONTEXT: Briefly explain how this content fits into its broader topic or domain\n\n" +
-        "Note: Preserve technical accuracy and specific details while removing any UI elements or navigation text.";
+        "You are a technical documentation expert. Extract and clarify technical information from this content.\n\n" +
+        "Focus on:\n" +
+        "1. Technical concepts, methods, and implementations\n" +
+        "2. Code examples and their explanations\n" +
+        "3. System architectures and design patterns\n" +
+        "4. Configuration details and parameters\n" +
+        "5. API specifications and usage examples\n\n" +
+        "For each technical detail:\n" +
+        "- Clarify complex concepts using precise, technical language\n" +
+        "- Preserve exact method names, parameters, and return values\n" +
+        "- Include specific version numbers and compatibility requirements\n" +
+        "- Maintain accuracy of technical specifications\n" +
+        "- Rewrite for clarity while keeping technical accuracy\n\n" +
+        "Format the output as:\n" +
+        "TECHNICAL DETAILS:\n" +
+        "• [Detail with clarification]\n" +
+        "• [Implementation specifics]\n" +
+        "• [Usage examples]\n\n" +
+        "CODE EXAMPLES: (if present)\n" +
+        "```[language]\n" +
+        "[code]\n" +
+        "```\n" +
+        "- [Explanation of the code]\n\n" +
+        "SPECIFICATIONS: (if applicable)\n" +
+        "- [Technical requirements]\n" +
+        "- [Version constraints]\n" +
+        "- [Dependencies]\n\n" +
+        "Note: Focus solely on technical content. Ignore marketing text, UI elements, or general descriptions.";
 
-      debugLog('AI Processing', 'Using context for memory creation', { context });
-      
-      const result = await writer.write(content, { context });
-      const processedContent = result.trim();
-      
-      if (!processedContent) {
-        debugLog('AI Processing', 'Memory creation failed, using original content');
-        return content;
-      }
-
-      debugLog('AI Processing', 'Memory created', {
-        originalLength: content.length,
-        originalWords: content.split(/\s+/).length,
-        processedLength: processedContent.length,
-        processedWords: processedContent.split(/\s+/).length,
-        reductionPercent: ((content.length - processedContent.length) / content.length * 100).toFixed(2) + '%'
+      const result = await writer.write(chunk, { 
+        context,
+        maxTokens: TOKEN_LIMITS.NANO_CONTEXT - 300 // Leave more room for detailed context
       });
 
-      // Validate the memory format
-      if (!processedContent.includes('TITLE:') || !processedContent.includes('SUMMARY:')) {
-        debugLog('AI Processing', 'Memory format validation failed, attempting reformatting');
-        
-        const reformatContext = 
-          "Reformat this content into a structured memory with these sections:\n" +
-          "TITLE: (clear, descriptive title)\n" +
-          "SUMMARY: (2-3 sentences)\n" +
-          "KEY POINTS: (bullet points)\n" +
-          "CONTEXT: (broader context)\n\n" +
-          "Maintain all specific details and technical accuracy.";
-        
-        const reformatted = await writer.write(processedContent, { context: reformatContext });
-        return reformatted.trim() || processedContent;
-      }
-
-      return processedContent;
-    } catch (writerError) {
-      debugLog('AI Processing', 'Error during memory creation', { 
-        error: writerError.message,
-        stack: writerError.stack,
-        phase: 'writing'
-      });
-      return content;
-    } finally {
-      try {
-        await writer.destroy();
-        debugLog('AI Processing', 'AI writer destroyed successfully');
-      } catch (destroyError) {
-        debugLog('AI Processing', 'Error destroying AI writer', { 
-          error: destroyError.message,
-          phase: 'cleanup'
-        });
+      if (result?.trim()) {
+        processedChunks.push(result.trim());
       }
     }
+
+    // If we have multiple chunks, combine them with technical focus
+    if (processedChunks.length > 1) {
+      const combinationContext = 
+        "You are a technical documentation expert. Combine these technical extracts into a cohesive document.\n\n" +
+        "Requirements:\n" +
+        "1. Merge related technical concepts while maintaining detail\n" +
+        "2. Group similar implementations and examples\n" +
+        "3. Consolidate specifications and requirements\n" +
+        "4. Ensure all code examples are properly contextualized\n" +
+        "5. Maintain technical precision while improving clarity\n\n" +
+        "Format as a technical document with clear sections for:\n" +
+        "- Core Technical Concepts\n" +
+        "- Implementation Details\n" +
+        "- Code Examples\n" +
+        "- Technical Specifications\n\n" +
+        "Prioritize technical accuracy and clarity.";
+
+      const finalResult = await writer.write(processedChunks.join('\n---\n'), {
+        context: combinationContext,
+        maxTokens: TOKEN_LIMITS.NANO_CONTEXT - 200
+      });
+
+      return finalResult?.trim() || content;
+    }
+
+    return processedChunks[0] || content;
+
   } catch (error) {
-    debugLog('AI Processing', 'Critical AI processing error', { 
-      error: error.message,
-      stack: error.stack,
-      phase: 'setup'
-    });
+    debugLog('AI Processing', 'Error processing with AI', { error });
     return content;
   }
+}
+
+// Helper function to split content into chunks
+function splitIntoChunks(text, tokenLimit) {
+  // Rough estimate: 1 token ≈ 4 characters for English text
+  const charsPerChunk = (tokenLimit - 200) * 4; // Leave room for context
+  const chunks = [];
+  
+  // Use sentence boundaries for more natural splits
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+  let currentChunk = '';
+
+  for (const sentence of sentences) {
+    if ((currentChunk + sentence).length > charsPerChunk) {
+      if (currentChunk) {
+        chunks.push(currentChunk.trim());
+        currentChunk = '';
+      }
+      // If a single sentence is too long, split it
+      if (sentence.length > charsPerChunk) {
+        const words = sentence.split(/\s+/);
+        let tempChunk = '';
+        for (const word of words) {
+          if ((tempChunk + ' ' + word).length > charsPerChunk) {
+            chunks.push(tempChunk.trim());
+            tempChunk = word;
+          } else {
+            tempChunk += (tempChunk ? ' ' : '') + word;
+          }
+        }
+        if (tempChunk) {
+          currentChunk = tempChunk;
+        }
+      } else {
+        currentChunk = sentence;
+      }
+    } else {
+      currentChunk += (currentChunk ? ' ' : '') + sentence;
+    }
+  }
+
+  if (currentChunk) {
+    chunks.push(currentChunk.trim());
+  }
+
+  return chunks;
 }
 
 async function extractPageContent(tabId) {
