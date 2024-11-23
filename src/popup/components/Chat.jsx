@@ -14,29 +14,30 @@ const MarkdownComponents = {
     const language = match ? match[1] : 'text';
     
     return !inline ? (
-      <div className="relative group w-full overflow-x-auto">
-        <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <span className="text-xs font-medium text-gray-400 bg-gray-800/70 px-2 py-1 rounded-md">
-            {language}
-          </span>
+      <div className="code-block-wrapper">
+        <div className="language-indicator">
+          <span>{language}</span>
         </div>
-        <SyntaxHighlighter
-          style={tomorrow}
-          language={language}
-          PreTag="div"
-          className="!my-4 !bg-gray-50/80 !rounded-xl !border !border-gray-100/80 !shadow-sm !backdrop-blur-sm !text-xs md:!text-sm !leading-relaxed !p-3 max-w-full"
-          customStyle={{
-            margin: '0',
-            fontSize: '12px',
-            lineHeight: '1.5'
-          }}
-          {...props}
-        >
-          {String(children).replace(/\n$/, '')}
-        </SyntaxHighlighter>
+        <div className="code-content">
+          <SyntaxHighlighter
+            style={tomorrow}
+            language={language}
+            PreTag="div"
+            customStyle={{
+              margin: 0,
+              padding: '12px',
+              background: 'transparent',
+              fontSize: '12px',
+              lineHeight: '1.5'
+            }}
+            {...props}
+          >
+            {String(children).replace(/\n$/, '')}
+          </SyntaxHighlighter>
+        </div>
       </div>
     ) : (
-      <code className="font-mono text-xs bg-gray-100/80 px-1.5 py-0.5 rounded-md" {...props}>
+      <code className="inline-code">
         {children}
       </code>
     );
@@ -96,23 +97,27 @@ const Message = ({ message, onInjectContext }) => {
           </button>
         </div>
       </div>
-      <div className="message-content">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={MarkdownComponents}
-        >
-          {message.content}
-        </ReactMarkdown>
+      <div className="message-content-wrapper">
+        <div className="message-content">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={MarkdownComponents}
+          >
+            {message.content}
+          </ReactMarkdown>
+        </div>
       </div>
       {!message.isContext && message.sources && message.sources.length > 0 && (
         <div className="message-sources">
-          <div className="sources-header">Sources</div>
-          {message.sources.map((source, sourceIndex) => (
-            <div key={sourceIndex} className="source-item">
-              <div className="source-id">[{sourceIndex + 1}]</div>
-              <div className="source-preview">{source.preview}</div>
-            </div>
-          ))}
+          <div className="sources-header">Sources:</div>
+          <div className="sources-list">
+            {message.sources.map((source, index) => (
+              <div key={index} className="source-item">
+                <span className="source-number">[{index + 1}]</span>
+                <span className="source-text">{source.preview}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

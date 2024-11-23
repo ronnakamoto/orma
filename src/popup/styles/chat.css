@@ -63,15 +63,16 @@
 
 .message {
   max-width: 85%;
-  padding: 16px;
   border-radius: 20px;
   font-size: 14px;
   line-height: 1.5;
   display: flex;
   flex-direction: column;
-  gap: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   transition: all 0.3s ease;
+  position: relative;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
 .message:hover {
@@ -89,18 +90,107 @@
 
 .message.assistant {
   align-self: flex-start;
-  background: white;
+  background: rgba(255, 255, 255, 0.95);
   color: #1d1d1f;
   margin-right: 32px;
   border-bottom-left-radius: 4px;
   border: 1px solid rgba(99, 102, 241, 0.1);
 }
 
+.message-content-wrapper {
+  position: relative;
+  max-height: 400px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  margin: 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.message-content-wrapper::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.message-content-wrapper::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.message-content-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.message.user .message-content-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.message-content-wrapper:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.message.user .message-content-wrapper:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 .message-content {
-  white-space: pre-wrap;
-  font-weight: 400;
-  letter-spacing: -0.01em;
-  line-height: 1.6;
+  width: 100%;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  word-break: break-word;
+}
+
+.message-content::-webkit-scrollbar {
+  display: none;
+}
+
+.message-content {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.message pre {
+  max-width: 100%;
+  margin: 0;
+  position: relative;
+}
+
+.message pre > div {
+  max-height: 400px;
+}
+
+.message .overflow-auto {
+  max-width: 100%;
+  overflow: auto;
+}
+
+.message .overflow-auto pre {
+  display: inline-block;
+  min-width: min-content;
+  margin: 0;
+}
+
+.message pre > div::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.message pre > div::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+}
+
+.message pre > div::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.message pre > div::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
 }
 
 .message-content cite {
@@ -132,78 +222,48 @@
 }
 
 .message-sources {
-  margin-top: 12px;
-  padding-top: 12px;
+  margin-top: 8px;
+  padding: 12px 16px;
   border-top: 1px solid rgba(99, 102, 241, 0.1);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .message.user .message-sources {
-  border-top-color: rgba(255, 255, 255, 0.2);
+  border-top-color: rgba(255, 255, 255, 0.1);
 }
 
 .sources-header {
-  font-weight: 600;
+  color: #6366f1;
+  font-weight: 500;
   margin-bottom: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 11px;
-  color: rgba(29, 29, 31, 0.6);
 }
 
 .message.user .sources-header {
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .source-item {
   display: flex;
-  align-items: flex-start;
-  margin-bottom: 8px;
-  gap: 4px;
-  padding: 8px;
-  background: rgba(99, 102, 241, 0.03);
-  border-radius: 8px;
-  border: 1px solid rgba(99, 102, 241, 0.05);
-  transition: all 0.2s ease;
+  gap: 8px;
+  margin-bottom: 4px;
 }
 
-.message.user .source-item {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-.source-item:hover {
-  background: rgba(99, 102, 241, 0.05);
-  border-color: rgba(99, 102, 241, 0.1);
-}
-
-.message.user .source-item:hover {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(255, 255, 255, 0.15);
-}
-
-.source-id {
+.source-number {
   color: #6366f1;
   font-weight: 500;
-  margin-right: 8px;
   flex-shrink: 0;
 }
 
-.message.user .source-id {
+.message.user .source-number {
   color: rgba(255, 255, 255, 0.9);
 }
 
-.source-preview {
-  color: rgba(29, 29, 31, 0.7);
-  font-size: 12px;
-  line-height: 1.4;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+.source-text {
+  flex: 1;
+  color: #4b5563;
 }
 
-.message.user .source-preview {
+.message.user .source-text {
   color: rgba(255, 255, 255, 0.8);
 }
 
@@ -428,4 +488,78 @@
   font-weight: 500;
   display: inline-block;
   margin: 0 1px;
+}
+
+.message .group .absolute {
+  z-index: 20;
+  background: rgba(31, 41, 55, 0.85);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(75, 85, 99, 0.2);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.code-block-wrapper {
+  position: relative;
+  width: 100%;
+  margin: 8px 0;
+  background: rgba(245, 245, 247, 0.8);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.message.user .code-block-wrapper {
+  background: rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.language-indicator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 20;
+}
+
+.language-indicator span {
+  font-size: 11px;
+  font-weight: 500;
+  color: #94a3b8;
+  background: rgba(30, 41, 59, 0.8);
+  padding: 2px 6px;
+  border-radius: 4px;
+  backdrop-filter: blur(4px);
+}
+
+.code-content {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.code-content::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+
+.code-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.code-content::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+}
+
+.code-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.inline-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  background: rgba(245, 245, 247, 0.8);
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: normal;
+  word-break: break-word;
 }
