@@ -4,6 +4,8 @@ const tailwindcss = require('tailwindcss');
 mix.setPublicPath('dist')
    .js('src/background/index.js', 'dist/js/background.js')
    .js('src/content/index.jsx', 'dist/js/content.js')
+   // Temporarily disabled ChatGPT context injection
+   // .js('src/content-scripts/chatgpt.js', 'dist/js/chatgpt-content.js')
    .js('src/popup/index.jsx', 'dist/js/popup.js')
    .js('src/offscreen/index.js', 'dist/js/offscreen.js')
    .react()

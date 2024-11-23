@@ -157,12 +157,12 @@
 
 .source-item {
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
+  margin-bottom: 8px;
   gap: 4px;
   padding: 8px;
   background: rgba(99, 102, 241, 0.03);
   border-radius: 8px;
-  margin-bottom: 8px;
   border: 1px solid rgba(99, 102, 241, 0.05);
   transition: all 0.2s ease;
 }
@@ -183,11 +183,10 @@
 }
 
 .source-id {
-  font-weight: 600;
   color: #6366f1;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-weight: 500;
+  margin-right: 8px;
+  flex-shrink: 0;
 }
 
 .message.user .source-id {
@@ -206,6 +205,70 @@
 
 .message.user .source-preview {
   color: rgba(255, 255, 255, 0.8);
+}
+
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.message-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.action-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: white;
+  color: #6366f1;
+  padding: 0;
+}
+
+.action-button:hover {
+  background: rgba(99, 102, 241, 0.05);
+  transform: translateY(-1px);
+  border-color: rgba(99, 102, 241, 0.4);
+}
+
+.action-button:active {
+  transform: translateY(0);
+}
+
+.action-button svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+
+.message.user .action-button {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+.message.user .action-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.context-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6366f1;
+  background: rgba(99, 102, 241, 0.1);
+  padding: 4px 8px;
+  border-radius: 6px;
 }
 
 .chat-input-container {
@@ -358,4 +421,11 @@
   background: rgba(99, 102, 241, 0.3);
   border: 2px solid transparent;
   background-clip: padding-box;
+}
+
+.citation {
+  color: #6366f1;
+  font-weight: 500;
+  display: inline-block;
+  margin: 0 1px;
 }

@@ -21,9 +21,20 @@
   "background": {
     "service_worker": "js/background.js"
   },
-  "content_scripts": [{
-    "matches": ["<all_urls>"],
-    "js": ["js/content.js"],
-    "css": ["css/app.css"]
-  }]
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["js/content.js"],
+      "css": ["css/app.css"]
+    }
+    /* Temporarily disabled ChatGPT context injection
+    ,{
+      "matches": [
+        "https://chat.openai.com/*",
+        "https://chatgpt.com/*"
+      ],
+      "js": ["js/chatgpt-content.js"]
+    }
+    */
+  ]
 }
