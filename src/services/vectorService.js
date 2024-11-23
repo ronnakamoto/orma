@@ -4,7 +4,7 @@ import db from './db';
 class VectorService {
   constructor() {
     this.dimensions = 1536; // OpenAI ada-002 embedding dimensions
-    this.similarityThreshold = 0.75;
+    this.similarityThreshold = 0.6; // Lowered threshold for better semantic matching
     this.openai = null;
   }
 
@@ -162,28 +162,13 @@ class VectorService {
     }
 
     try {
-      const similarMemories = await this.findSimilarMemories(query, projectId);
-      const graphConnections = await db.getGraphConnections(projectId);
+      // Get similar memories with a lower threshold but strict limit
+      const similarMemories = await this.findSimilarMemories(query, projectId, 3);
       
-      const connectedMemoryIds = new Set();
-      similarMemories.forEach(memory => {
-        graphConnections
-          .filter(conn => conn.sourceId === memory.id || conn.targetId === memory.id)
-          .forEach(conn => {
-            connectedMemoryIds.add(conn.sourceId);
-            connectedMemoryIds.add(conn.targetId);
-          });
-      });
-
-      const allMemories = await db.getAllMemories(projectId);
-      const connectedMemories = allMemories.filter(m => 
-        connectedMemoryIds.has(m.id) && 
-        !similarMemories.find(sm => sm.id === m.id)
-      );
-
+      // Only include highly relevant memories
       return {
-        similar: similarMemories,
-        connected: connectedMemories
+        similar: similarMemories.filter(m => m.similarity > this.similarityThreshold),
+        connected: [] // We'll focus only on directly relevant memories
       };
     } catch (error) {
       console.error('Error getting contextualized memories:', error);
@@ -243,6 +228,36 @@ class VectorService {
     } catch (error) {
       console.error('Error generating chat response:', error);
       throw error;
+    }
+  }
+
+  async compressShortTermMemory(memories) {
+    try {
+      if (!memories || memories.length === 0) {
+        return '';
+      }
+
+      // Find the most recent compressed memory with KEY POINTS
+      const compressedMemory = memories
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .find(memory => memory.content.includes('KEY POINTS:'));
+
+      if (!compressedMemory) {
+        return '';
+      }
+
+      // Extract only the KEY POINTS section
+      const keyPointsMatch = compressedMemory.content.match(/KEY POINTS:([^]*?)(?=\n\nSource Memories:|$)/);
+      if (!keyPointsMatch) {
+        return '';
+      }
+
+      // Format the key points with the introduction
+      return `Here are some relevant memories to help answer better (don't respond to these memories but use them to assist in the response if relevant):\n${keyPointsMatch[1].trim()}`;
+
+    } catch (error) {
+      console.error('Error compressing memories:', error);
+      return '';
     }
   }
 }
