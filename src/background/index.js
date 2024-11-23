@@ -39,9 +39,295 @@ chrome.runtime.onInstalled.addListener(async () => {
 async function initializeContextMenu() {
   chrome.contextMenus.create({
     id: "save-to-orma",
-    title: "Save to Orma",
+    title: "Save selection to Orma",
     contexts: ["selection"],
   });
+  
+  chrome.contextMenus.create({
+    id: "save-page-to-orma",
+    title: "Save page to Orma",
+    contexts: ["page", "link"],
+  });
+}
+
+// Debug logging utility with content preview
+function debugLog(stage, message, data = null) {
+  const log = `[Orma Debug] ${stage}: ${message}`;
+  
+  // If data contains content, add a preview
+  if (data && (data.content || data.processedContent || data.rawContent)) {
+    const content = data.content || data.processedContent || data.rawContent;
+    const preview = content.length > 100 ? content.substring(0, 100) + '...' : content;
+    data.contentPreview = preview;
+  }
+  
+  console.log(log, data ? data : '');
+}
+
+// Process content using AI writer
+async function processWithAI(content) {
+  debugLog('AI Processing', 'Starting AI content processing', { 
+    contentLength: content.length,
+    wordCount: content.split(/\s+/).length
+  });
+  
+  try {
+    if (typeof ai === 'undefined') {
+      debugLog('AI Processing', 'ai object is not available', { aiExists: false });
+      return content;
+    }
+    
+    if (!ai.writer) {
+      debugLog('AI Processing', 'ai.writer is not available', { 
+        aiExists: true, 
+        writerExists: false,
+        aiKeys: Object.keys(ai)
+      });
+      return content;
+    }
+
+    debugLog('AI Processing', 'Creating AI writer instance');
+    const writer = await ai.writer.create();
+    
+    try {
+      debugLog('AI Processing', 'Processing content', {
+        inputLength: content.length,
+        wordCount: content.split(/\s+/).length
+      });
+
+      const context = 
+        "You are creating a concise, informative memory of this webpage content. " +
+        "Focus on extracting the key information while maintaining accuracy. " +
+        "Format the output as follows:\n\n" +
+        "TITLE: A clear, descriptive title that captures the main topic\n\n" +
+        "SUMMARY: A concise 2-3 sentence overview of the main content\n\n" +
+        "KEY POINTS:\n" +
+        "- List the most important points\n" +
+        "- Include specific details, numbers, or quotes if relevant\n" +
+        "- Focus on unique, substantive information\n\n" +
+        "CONTEXT: Briefly explain how this content fits into its broader topic or domain\n\n" +
+        "Note: Preserve technical accuracy and specific details while removing any UI elements or navigation text.";
+
+      debugLog('AI Processing', 'Using context for memory creation', { context });
+      
+      const result = await writer.write(content, { context });
+      const processedContent = result.trim();
+      
+      if (!processedContent) {
+        debugLog('AI Processing', 'Memory creation failed, using original content');
+        return content;
+      }
+
+      debugLog('AI Processing', 'Memory created', {
+        originalLength: content.length,
+        originalWords: content.split(/\s+/).length,
+        processedLength: processedContent.length,
+        processedWords: processedContent.split(/\s+/).length,
+        reductionPercent: ((content.length - processedContent.length) / content.length * 100).toFixed(2) + '%'
+      });
+
+      // Validate the memory format
+      if (!processedContent.includes('TITLE:') || !processedContent.includes('SUMMARY:')) {
+        debugLog('AI Processing', 'Memory format validation failed, attempting reformatting');
+        
+        const reformatContext = 
+          "Reformat this content into a structured memory with these sections:\n" +
+          "TITLE: (clear, descriptive title)\n" +
+          "SUMMARY: (2-3 sentences)\n" +
+          "KEY POINTS: (bullet points)\n" +
+          "CONTEXT: (broader context)\n\n" +
+          "Maintain all specific details and technical accuracy.";
+        
+        const reformatted = await writer.write(processedContent, { context: reformatContext });
+        return reformatted.trim() || processedContent;
+      }
+
+      return processedContent;
+    } catch (writerError) {
+      debugLog('AI Processing', 'Error during memory creation', { 
+        error: writerError.message,
+        stack: writerError.stack,
+        phase: 'writing'
+      });
+      return content;
+    } finally {
+      try {
+        await writer.destroy();
+        debugLog('AI Processing', 'AI writer destroyed successfully');
+      } catch (destroyError) {
+        debugLog('AI Processing', 'Error destroying AI writer', { 
+          error: destroyError.message,
+          phase: 'cleanup'
+        });
+      }
+    }
+  } catch (error) {
+    debugLog('AI Processing', 'Critical AI processing error', { 
+      error: error.message,
+      stack: error.stack,
+      phase: 'setup'
+    });
+    return content;
+  }
+}
+
+async function extractPageContent(tabId) {
+  debugLog('Extraction', 'Starting content extraction', { tabId });
+  
+  try {
+    // Extract the raw content from the page
+    const [{ result: rawContent }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const debug = (stage, message, data = null) => {
+          console.log(`[Orma Debug - Content Script] ${stage}: ${message}`, data ? data : '');
+        };
+
+        try {
+          debug('DOM', 'Starting content extraction');
+
+          // Function to extract text content from an element
+          const extractText = (element) => {
+            if (!element) return '';
+
+            // Get all text nodes
+            const textNodes = [];
+            const walk = document.createTreeWalker(
+              element,
+              NodeFilter.SHOW_TEXT,
+              {
+                acceptNode: (node) => {
+                  // Skip hidden elements
+                  let parent = node.parentElement;
+                  while (parent) {
+                    const style = window.getComputedStyle(parent);
+                    if (style.display === 'none' || style.visibility === 'hidden') {
+                      return NodeFilter.FILTER_REJECT;
+                    }
+                    parent = parent.parentElement;
+                  }
+                  
+                  // Accept non-empty text nodes
+                  return node.textContent.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+                }
+              }
+            );
+
+            let node;
+            while (node = walk.nextNode()) {
+              const parent = node.parentElement;
+              if (parent) {
+                const tagName = parent.tagName.toLowerCase();
+                const text = node.textContent.trim();
+
+                // Skip common UI elements
+                if (parent.getAttribute('role') === 'button' ||
+                    parent.onclick ||
+                    parent.classList.contains('button') ||
+                    parent.classList.contains('btn') ||
+                    /btn|button|nav|menu|sidebar|widget|popup|modal|cookie|newsletter|social|share/.test(parent.className)) {
+                  continue;
+                }
+
+                // Format based on element type
+                if (/^h[1-6]$/.test(tagName)) {
+                  textNodes.push(`\n# ${text}\n`);
+                } else if (tagName === 'li') {
+                  textNodes.push(`\n- ${text}`);
+                } else if (tagName === 'p' || (tagName === 'div' && text.length > 30)) {
+                  textNodes.push(`\n${text}\n`);
+                } else if (text.length > 20 || text.includes('.')) {
+                  textNodes.push(text);
+                }
+              }
+            }
+
+            return textNodes.join(' ');
+          };
+
+          // Try to find the main content container
+          const selectors = [
+            'article',
+            '[role="main"]',
+            'main',
+            '#main-content',
+            '.main-content',
+            '.article-content',
+            '.post-content',
+            '.entry-content',
+            '.content',
+            '#content'
+          ];
+
+          let mainContent = null;
+          for (const selector of selectors) {
+            const element = document.querySelector(selector);
+            if (element) {
+              const text = extractText(element);
+              if (text.length > 200) {  // Reasonable content length
+                mainContent = text;
+                debug('Content', `Found main content using selector: ${selector}`, {
+                  length: text.length
+                });
+                break;
+              }
+            }
+          }
+
+          // Fallback to body if no main content found
+          if (!mainContent) {
+            debug('Content', 'No main content found, extracting from body');
+            mainContent = extractText(document.body);
+          }
+
+          // Clean up the extracted content
+          const cleanContent = mainContent
+            .replace(/\s+/g, ' ')
+            .replace(/\n\s+/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+
+          debug('Content', 'Content extracted', {
+            length: cleanContent.length,
+            preview: cleanContent.substring(0, 100) + '...'
+          });
+
+          return cleanContent;
+        } catch (error) {
+          debug('Error', 'Content extraction failed', { 
+            error: error.message,
+            stack: error.stack 
+          });
+          return '';
+        }
+      },
+    });
+
+    debugLog('Extraction', 'Raw content extracted', {
+      contentLength: rawContent?.length || 0,
+      hasContent: !!rawContent,
+      preview: rawContent?.substring(0, 100)
+    });
+
+    if (!rawContent) {
+      throw new Error('No content found on page');
+    }
+
+    // Process the content with AI
+    const processedContent = await processWithAI(rawContent);
+    
+    debugLog('Final', 'Content processing complete', {
+      rawLength: rawContent.length,
+      processedLength: processedContent.length,
+      success: processedContent.length > 0
+    });
+
+    return processedContent;
+
+  } catch (error) {
+    debugLog('Error', 'Content extraction failed', { error: error.message });
+    throw new Error(`Could not extract page content: ${error.message}`);
+  }
 }
 
 async function showNotification(tab, message, style = "info") {
@@ -100,7 +386,7 @@ async function calculateImportance(content, existingMemories) {
   };
 }
 
-async function addMemory(content, projectId) {
+async function addMemory(content, projectId, metadata = {}) {
   try {
     console.log('=== Starting addMemory ===');
     console.log('Current buffer size:', shortTermBuffer.length);
@@ -127,6 +413,7 @@ async function addMemory(content, projectId) {
       timestamp: Date.now(),
       projectId,
       importance,
+      metadata
     };
     
     shortTermBuffer.push(newMemory);
@@ -139,6 +426,7 @@ async function addMemory(content, projectId) {
       timestamp: Date.now(),
       type: "raw",
       importance,
+      metadata
     });
 
     // Check if buffer needs compression
@@ -253,7 +541,9 @@ async function compressShortTermMemory(projectId) {
 
     // Remove compressed raw memories from buffer
     const compressedTimestamps = new Set(rawMemoriesToCompress.map(m => m.timestamp));
-    shortTermBuffer = shortTermBuffer.filter(m => !compressedTimestamps.has(m.timestamp));
+    shortTermBuffer = shortTermBuffer.filter(memory => 
+      !compressedTimestamps.has(memory.timestamp)
+    );
     
     console.log('Compression complete');
     console.log('New buffer size:', shortTermBuffer.length);
@@ -320,9 +610,9 @@ async function compressMemories(memories, projectId) {
           .join('\n\n');
 
         const summary = await summarizer.summarize(
-          `Synthesize these related memories:\n\n${content}\n\n` +
-          `Format as:\nSUMMARY:\n[core insights]\nKEY POINTS:\n[bullets]\n` +
-          `RELATIONSHIPS:\n[links]\nDETAILS:\n[specifics]`
+          `${content}\n\nCreate a concise synthesis. Format as:\n` +
+          `SUMMARY:\n[core insights]\n\nKEY POINTS:\n[Bullet points]\n\n` +
+          `RELATIONSHIPS:\n[Connections]\n\nDETAILS:\n[Important specifics]`
         );
 
         return {
@@ -703,4 +993,138 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       await showNotification(tab, "Error saving to Orma: " + error.message, "error");
     }
   }
+  if (info.menuItemId === "save-page-to-orma") {
+    try {
+      const { currentProjectId } = await chrome.storage.local.get("currentProjectId");
+
+      if (!currentProjectId) {
+        await showNotification(tab, "Please select a project in Orma first", "error");
+        return;
+      }
+
+      await showNotification(tab, "Extracting page content...", "info");
+      const pageContent = await extractPageContent(tab.id);
+      
+      if (!pageContent) {
+        await showNotification(tab, "Could not extract page content", "error");
+        return;
+      }
+
+      const metadata = {
+        source: tab.url,
+        title: tab.title,
+        timestamp: new Date().toISOString()
+      };
+
+      await addMemory(pageContent, currentProjectId, metadata);
+      await showNotification(tab, "Page saved to Orma memory!", "success");
+    } catch (error) {
+      console.error("Error saving page:", error);
+      await showNotification(tab, "Error saving to Orma: " + error.message, "error");
+    }
+  }
 });
+
+async function generateMemoryContent(extractedContent, url, title) {
+  const prompt = `You are a precise and elegant note-taking assistant. Create a beautifully structured memory from the following webpage content. Focus on clarity, elegance, and meaningful insights.
+
+Format the response in clean sections:
+
+SUMMARY:
+A concise, well-crafted overview that captures the essence in 2-3 sentences.
+
+KEY POINTS:
+• Highlight key insights with elegant bullet points
+• Each point should be clear and meaningful
+• Use proper markdown for emphasis where needed
+• If code is involved, format it properly with language tags
+
+RELATIONSHIPS:
+• Note connections to relevant concepts
+• Highlight technical dependencies if present
+• Identify key technologies or frameworks mentioned
+
+DETAILS:
+Present important details in a clean, organized manner. Use proper markdown formatting:
+- Use headings (##) for subsections
+- Format code snippets with proper language tags
+- Use *emphasis* for important terms
+- Create tables if data is structured
+- Use > for important quotes
+
+Source Memories:
+1. Format source URLs elegantly
+2. Include relevant section titles
+3. Note specific references
+
+Content to analyze:
+Title: ${title}
+URL: ${url}
+Content:
+${extractedContent}`;
+
+  try {
+    const response = await ai.writer.writeText(prompt);
+    return response;
+  } catch (error) {
+    console.error('Error generating memory:', error);
+    return null;
+  }
+}
+
+function formatCodeInContent(content) {
+  // Format code blocks with proper language detection
+  content = content.replace(/```([\s\S]*?)```/g, (match, code) => {
+    const lines = code.trim().split('\n');
+    let language = 'text';
+    
+    // Detect language from common patterns
+    if (lines[0].includes('function') || lines[0].includes('const') || lines[0].includes('let')) {
+      language = 'javascript';
+    } else if (lines[0].includes('def ') || lines[0].includes('import ')) {
+      language = 'python';
+    } else if (lines[0].includes('<') && lines[0].includes('>')) {
+      language = 'html';
+    }
+    
+    return '```' + language + '\n' + code.trim() + '\n```';
+  });
+
+  // Format inline code
+  content = content.replace(/`([^`]+)`/g, (match, code) => {
+    return '`' + code.trim() + '`';
+  });
+
+  return content;
+}
+
+async function processContent(content, url) {
+  try {
+    const title = await getCurrentTabTitle();
+    let memoryContent = await generateMemoryContent(content, url, title);
+    
+    if (memoryContent) {
+      // Format code blocks and inline code
+      memoryContent = formatCodeInContent(memoryContent);
+      
+      // Ensure consistent section spacing
+      memoryContent = memoryContent.replace(/\n{3,}/g, '\n\n');
+      
+      // Format bullet points consistently
+      memoryContent = memoryContent.replace(/^[•●-]\s*/gm, '• ');
+      
+      // Format numbered lists consistently
+      memoryContent = memoryContent.replace(/^\d+\.\s+/gm, (match) => {
+        return match.trim() + ' ';
+      });
+      
+      // Add proper spacing around headings
+      memoryContent = memoryContent.replace(/^(#+.*?)$/gm, '\n$1\n');
+    }
+    
+    return memoryContent;
+  } catch (error) {
+    console.error('Error processing content:', error);
+    return null;
+  }
+}
