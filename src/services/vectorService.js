@@ -162,13 +162,47 @@ class VectorService {
     }
 
     try {
-      // Get similar memories with a lower threshold but strict limit
-      const similarMemories = await this.findSimilarMemories(query, projectId, 3);
+      // Get more similar memories initially for better context
+      const similarMemories = await this.findSimilarMemories(query, projectId, 5);
       
-      // Only include highly relevant memories
+      // Filter memories with higher similarity threshold for quality
+      const highlyRelevant = similarMemories.filter(m => m.similarity > this.similarityThreshold + 0.1);
+      
+      // If we have enough highly relevant memories, use those
+      // Otherwise, fall back to the original threshold
+      const relevantMemories = highlyRelevant.length >= 2 
+        ? highlyRelevant 
+        : similarMemories.filter(m => m.similarity > this.similarityThreshold);
+
+      // Get connected memories for additional context
+      const connectedMemories = [];
+      for (const memory of relevantMemories) {
+        const allConnections = await db.getGraphConnections(projectId);
+        const memoryConnections = allConnections.filter(conn => 
+          (conn.sourceId === memory.id || conn.targetId === memory.id) && 
+          conn.weight > this.similarityThreshold
+        );
+        
+        if (memoryConnections.length > 0) {
+          const connectedIds = memoryConnections.map(conn => 
+            conn.sourceId === memory.id ? conn.targetId : conn.sourceId
+          );
+          const connected = await Promise.all(
+            connectedIds.map(id => db.memories.get(id))
+          );
+          connectedMemories.push(...connected.filter(Boolean));
+        }
+      }
+
+      // Combine and deduplicate memories
+      const allMemories = [...relevantMemories, ...connectedMemories];
+      const uniqueMemories = Array.from(new Map(
+        allMemories.map(m => [m.id, m])
+      ).values());
+
       return {
-        similar: similarMemories.filter(m => m.similarity > this.similarityThreshold),
-        connected: [] // We'll focus only on directly relevant memories
+        similar: uniqueMemories.slice(0, 5), // Limit to top 5 most relevant
+        connected: []
       };
     } catch (error) {
       console.error('Error getting contextualized memories:', error);
@@ -232,28 +266,50 @@ class VectorService {
   }
 
   async compressShortTermMemory(memories) {
+    if (!this.openai) {
+      throw new Error('Vector service not initialized');
+    }
+
     try {
       if (!memories || memories.length === 0) {
         return '';
       }
 
-      // Find the most recent compressed memory with KEY POINTS
-      const compressedMemory = memories
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-        .find(memory => memory.content.includes('KEY POINTS:'));
+      // Combine all memory content for context
+      const combinedContent = memories
+        .map(m => m.content)
+        .join('\n\n');
 
-      if (!compressedMemory) {
-        return '';
-      }
+      // Generate a comprehensive summary with complete bullet points
+      const response = await this.openai.chat.completions.create({
+        model: "gpt-4-1106-preview",
+        messages: [
+          {
+            role: "system",
+            content: `You are a precise and elegant note-taking assistant. Create a beautifully structured set of key points from the provided content. Each point should be complete, clear, and contextually meaningful.
 
-      // Extract only the KEY POINTS section
-      const keyPointsMatch = compressedMemory.content.match(/KEY POINTS:([^]*?)(?=\n\nSource Memories:|$)/);
-      if (!keyPointsMatch) {
-        return '';
-      }
+Guidelines for generating key points:
+1. Each bullet point should be a complete thought
+2. Include all relevant context within each point
+3. Maintain proper technical accuracy
+4. Format code references properly
+5. Ensure points flow logically
+6. Keep the total length reasonable (5-7 points)
+7. Focus on the most important information`
+          },
+          {
+            role: "user",
+            content: `Generate complete, contextual key points from this content:\n\n${combinedContent}`
+          }
+        ],
+        temperature: 0.5,
+        max_tokens: 1000
+      });
 
-      // Format the key points with the introduction
-      return `Here are some relevant memories to help answer better (don't respond to these memories but use them to assist in the response if relevant):\n${keyPointsMatch[1].trim()}`;
+      const keyPoints = response.choices[0].message.content;
+      
+      // Format the response with a clear introduction
+      return `Here are the relevant memories to provide context (use these to inform your response, but don't reference them directly):\n\n${keyPoints}`;
 
     } catch (error) {
       console.error('Error compressing memories:', error);

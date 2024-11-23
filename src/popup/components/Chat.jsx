@@ -1,6 +1,75 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { vectorService } from '../../services/vectorService';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { tomorrow } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import remarkGfm from 'remark-gfm';
+
+// Custom components for ReactMarkdown
+const MarkdownComponents = {
+  // Handle code blocks and inline code
+  code: ({ node, inline, className, children, ...props }) => {
+    const match = /language-(\w+)/.exec(className || '');
+    const language = match ? match[1] : 'text';
+    
+    return !inline ? (
+      <div className="relative group w-full overflow-x-auto">
+        <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <span className="text-xs font-medium text-gray-400 bg-gray-800/70 px-2 py-1 rounded-md">
+            {language}
+          </span>
+        </div>
+        <SyntaxHighlighter
+          style={tomorrow}
+          language={language}
+          PreTag="div"
+          className="!my-4 !bg-gray-50/80 !rounded-xl !border !border-gray-100/80 !shadow-sm !backdrop-blur-sm !text-xs md:!text-sm !leading-relaxed !p-3 max-w-full"
+          customStyle={{
+            margin: '0',
+            fontSize: '12px',
+            lineHeight: '1.5'
+          }}
+          {...props}
+        >
+          {String(children).replace(/\n$/, '')}
+        </SyntaxHighlighter>
+      </div>
+    ) : (
+      <code className="font-mono text-xs bg-gray-100/80 px-1.5 py-0.5 rounded-md" {...props}>
+        {children}
+      </code>
+    );
+  },
+  
+  // Enhanced paragraphs
+  p: ({ children }) => (
+    <p className="text-gray-600 leading-relaxed mb-4">
+      {children}
+    </p>
+  ),
+
+  // Enhanced lists
+  ul: ({ children }) => (
+    <ul className="space-y-2 mb-4">
+      {children}
+    </ul>
+  ),
+
+  li: ({ children }) => (
+    <li className="flex items-start gap-2 group">
+      <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-gray-300 group-hover:bg-purple-400 transition-colors duration-200" />
+      <span className="flex-1 -mt-0.5">{children}</span>
+    </li>
+  ),
+
+  // Enhanced blockquotes
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-4 border-purple-200 pl-4 my-4 italic text-gray-600">
+      {children}
+    </blockquote>
+  ),
+};
 
 const Message = ({ message, onInjectContext }) => {
   const copyToClipboard = async (text) => {
@@ -9,20 +78,6 @@ const Message = ({ message, onInjectContext }) => {
     } catch (err) {
       console.error('Failed to copy text: ', err);
     }
-  };
-
-  // Function to format message content with citations
-  const formatMessageWithCitations = (content, sources) => {
-    if (!sources || sources.length === 0) return content;
-
-    let formattedContent = content;
-    sources.forEach((source, idx) => {
-      formattedContent = formattedContent.replace(
-        `[Memory ${source.id}]`,
-        `<span class="citation">[${idx + 1}]</span>`
-      );
-    });
-    return formattedContent;
   };
 
   return (
@@ -39,26 +94,16 @@ const Message = ({ message, onInjectContext }) => {
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
             </svg>
           </button>
-          {/* Temporarily disabled ChatGPT context injection */}
-          {/* <button 
-            className="action-button"
-            onClick={() => onInjectContext(message.content)}
-            title="Inject into ChatGPT"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 4.5l7.5 7.5-7.5 7.5m-6-15l7.5 7.5-7.5 7.5" />
-            </svg>
-          </button> */}
         </div>
       </div>
-      <div 
-        className="message-content"
-        dangerouslySetInnerHTML={{
-          __html: message.role === 'user' 
-            ? message.content 
-            : formatMessageWithCitations(message.content, message.sources)
-        }}
-      />
+      <div className="message-content">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={MarkdownComponents}
+        >
+          {message.content}
+        </ReactMarkdown>
+      </div>
       {!message.isContext && message.sources && message.sources.length > 0 && (
         <div className="message-sources">
           <div className="sources-header">Sources</div>
