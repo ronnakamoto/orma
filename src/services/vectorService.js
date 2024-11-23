@@ -260,6 +260,115 @@ class VectorService {
       return '';
     }
   }
+
+  // Get project context for quiz generation
+  async getProjectContext(projectId) {
+    if (!projectId) {
+      throw new Error('Project ID is required');
+    }
+
+    try {
+      // Get all memories for the project
+      const memories = await db.memories.where('projectId').equals(projectId).toArray();
+      
+      // Get graph connections
+      const graphData = await db.graph.where('projectId').equals(projectId).first();
+      
+      // Combine memories and their relationships into a comprehensive context
+      const context = memories.map(memory => {
+        return `${memory.title}:\n${memory.content}`;
+      }).join('\n\n');
+
+      // Add graph relationships if available
+      if (graphData && graphData.connections) {
+        const relationships = Object.entries(graphData.connections)
+          .map(([key, connections]) => {
+            return `${key} is related to: ${connections.join(', ')}`;
+          })
+          .join('\n');
+        
+        if (relationships) {
+          context += '\n\nRelationships between components:\n' + relationships;
+        }
+      }
+
+      // Add project summary if available
+      const project = await db.projects.get(projectId);
+      if (project && project.summary) {
+        context = `Project Summary: ${project.summary}\n\n${context}`;
+      }
+
+      return context;
+    } catch (error) {
+      console.error('Error getting project context:', error);
+      throw error;
+    }
+  }
+
+  // Generate quiz questions based on project context
+  async generateQuizQuestions(projectContext) {
+    if (!this.openai) {
+      throw new Error('Vector service not initialized');
+    }
+
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert software developer creating a quiz about a codebase. Generate 5 multiple-choice questions that test understanding of the project's architecture, implementation details, and best practices. Format each question as follows:\n\nQ: [Question]\nA) [Option A]\nB) [Option B]\nC) [Option C]\nD) [Option D]\nCorrect: [A/B/C/D]"
+          },
+          {
+            role: "user",
+            content: `Based on this project context, generate a quiz:\n${projectContext}`
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 2000
+      });
+
+      const quizContent = response.choices[0].message.content;
+      
+      // Parse the response into a structured format
+      const questions = this.parseQuizQuestions(quizContent);
+      return questions;
+    } catch (error) {
+      console.error('Error generating quiz questions:', error);
+      throw error;
+    }
+  }
+
+  // Helper method to parse quiz questions from AI response
+  parseQuizQuestions(content) {
+    const questions = [];
+    const questionBlocks = content.split(/Q: /).filter(block => block.trim());
+
+    for (const block of questionBlocks) {
+      const lines = block.split('\n').filter(line => line.trim());
+      if (lines.length >= 6) { // Question + 4 options + Correct answer
+        const question = lines[0].trim();
+        const answers = lines.slice(1, 5).map(line => {
+          return line.substring(3).trim(); // Remove "A) ", "B) ", etc.
+        });
+        
+        // Get correct answer index (0-3) from "Correct: X" line
+        const correctLine = lines[5];
+        const correctLetter = correctLine.split(':')[1].trim();
+        const correctIndex = ['A', 'B', 'C', 'D'].indexOf(correctLetter);
+        
+        if (correctIndex !== -1) {
+          questions.push({
+            question,
+            answers,
+            correctAnswer: correctIndex
+          });
+        }
+      }
+    }
+    
+    return questions;
+  }
 }
 
 export const vectorService = new VectorService();

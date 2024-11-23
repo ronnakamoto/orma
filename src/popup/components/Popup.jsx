@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { PlusIcon, TrashIcon, Cog6ToothIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, TrashIcon, Cog6ToothIcon, MagnifyingGlassIcon, AcademicCapIcon } from '@heroicons/react/24/outline';
 import Memory from './Memory';
 import Settings from './Settings';
 import Chat from './Chat';
+import Quiz from './Quiz';
 import '../styles/chat.css';
+import '../styles/quiz.css';
 import { vectorService } from '../../services/vectorService';
 import db from '../../services/db';
 import { motion } from 'framer-motion';
@@ -15,6 +17,7 @@ export default function Popup() {
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showQuiz, setShowQuiz] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -149,6 +152,12 @@ export default function Popup() {
           projectName={currentProject?.name}
           onClose={() => setShowChat(false)} 
         />
+      ) : showQuiz ? (
+        <Quiz
+          projectId={currentProject?.id}
+          projectName={currentProject?.name}
+          onClose={() => setShowQuiz(false)}
+        />
       ) : (
         <>
           <header className="bg-white shadow-sm px-6 py-4 flex items-center justify-between">
@@ -167,6 +176,15 @@ export default function Popup() {
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                     <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
+                </motion.button>
+                <motion.button
+                  onClick={() => currentProject && setShowQuiz(true)}
+                  className={`p-1.5 text-gray-400 hover:text-gray-600 focus:outline-none transition-colors duration-300 ${!currentProject ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  whileHover={currentProject ? { scale: 1.05 } : {}}
+                  whileTap={currentProject ? { scale: 0.95 } : {}}
+                  disabled={!currentProject}
+                >
+                  <AcademicCapIcon className="h-5 w-5" />
                 </motion.button>
                 <motion.button
                   onClick={() => setShowSettings(true)}
