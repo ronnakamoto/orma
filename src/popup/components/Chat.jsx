@@ -43,32 +43,43 @@ const MarkdownComponents = {
     );
   },
   
-  // Enhanced paragraphs
+  // Enhanced paragraph with proper text wrapping
   p: ({ children }) => (
-    <p className="text-gray-600 leading-relaxed mb-4">
+    <p className={`text-current leading-relaxed mb-4 whitespace-pre-wrap break-words`}>
       {children}
     </p>
   ),
 
-  // Enhanced lists
+  // Enhanced lists with proper indentation and wrapping
   ul: ({ children }) => (
-    <ul className="space-y-2 mb-4">
+    <ul className="space-y-2 mb-4 pl-2">
       {children}
     </ul>
   ),
 
   li: ({ children }) => (
-    <li className="flex items-start gap-2 group">
-      <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-gray-300 group-hover:bg-purple-400 transition-colors duration-200" />
-      <span className="flex-1 -mt-0.5">{children}</span>
+    <li className="flex items-start gap-2 group break-words text-current">
+      <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-current opacity-40 group-hover:opacity-60 transition-opacity" />
+      <span className="flex-1 -mt-0.5 whitespace-pre-wrap">{children}</span>
     </li>
   ),
 
-  // Enhanced blockquotes
+  // Enhanced blockquotes with proper text wrapping
   blockquote: ({ children }) => (
-    <blockquote className="border-l-4 border-purple-200 pl-4 my-4 italic text-gray-600">
+    <blockquote className="border-l-4 border-current border-opacity-20 pl-4 my-4 italic text-current text-opacity-90 whitespace-pre-wrap break-words">
       {children}
     </blockquote>
+  ),
+
+  // Enhanced headings with proper wrapping
+  h1: ({ children }) => (
+    <h1 className="text-xl font-bold mb-4 break-words text-current">{children}</h1>
+  ),
+  h2: ({ children }) => (
+    <h2 className="text-lg font-bold mb-3 break-words text-current">{children}</h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="text-base font-bold mb-2 break-words text-current">{children}</h3>
   ),
 };
 
@@ -80,6 +91,9 @@ const Message = ({ message, onInjectContext }) => {
       console.error('Failed to copy text: ', err);
     }
   };
+
+  // Remove memory citations from content
+  const cleanContent = message.content.replace(/\[Memory \d+\]:\s*/g, '');
 
   return (
     <div className={`message ${message.role}`}>
@@ -103,7 +117,7 @@ const Message = ({ message, onInjectContext }) => {
             remarkPlugins={[remarkGfm]}
             components={MarkdownComponents}
           >
-            {message.content}
+            {cleanContent}
           </ReactMarkdown>
         </div>
       </div>

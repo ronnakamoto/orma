@@ -83,7 +83,7 @@
 .message.user {
   align-self: flex-end;
   background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-  color: white;
+  color: rgba(255, 255, 255, 0.95);
   margin-left: 32px;
   border-bottom-right-radius: 4px;
 }
@@ -236,6 +236,7 @@
   color: #6366f1;
   font-weight: 500;
   margin-bottom: 8px;
+  opacity: 0.8;
 }
 
 .message.user .sources-header {
@@ -246,6 +247,7 @@
   display: flex;
   gap: 8px;
   margin-bottom: 4px;
+  opacity: 0.8;
 }
 
 .source-number {
@@ -314,12 +316,13 @@
 .message.user .action-button {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.2);
-  color: white;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .message.user .action-button:hover {
   background: rgba(255, 255, 255, 0.2);
   border-color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .context-label {
@@ -562,4 +565,9 @@
   border-radius: 4px;
   white-space: normal;
   word-break: break-word;
+}
+
+.message.user .inline-code {
+  background: rgba(0, 0, 0, 0.2);
+  color: rgba(255, 255, 255, 0.95);
 }
