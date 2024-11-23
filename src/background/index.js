@@ -424,6 +424,12 @@ async function calculateImportance(content, existingMemories) {
 
 async function addMemory(content, projectId, metadata = {}) {
   try {
+    // Notify that processing has started
+    chrome.runtime.sendMessage({
+      type: 'memoryProcessingStatus',
+      processing: true
+    });
+
     console.log('=== Starting addMemory ===');
     console.log('Current buffer size:', shortTermBuffer.length);
 
@@ -474,6 +480,14 @@ async function addMemory(content, projectId, metadata = {}) {
     return storedMemory;
   } catch (error) {
     console.error("Error in addMemory:", error);
+    
+    // Notify that processing has failed
+    chrome.runtime.sendMessage({
+      type: 'memoryProcessingStatus',
+      processing: false,
+      error: error.message
+    });
+    
     return await storeMemory({
       content: `[${new Date().toISOString()}]\n${content}\n\nContext: Saved from webpage`,
       projectId,
