@@ -21,7 +21,8 @@ export default function Popup() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [searching, setSearching] = useState(false);
-  const [processingMemory, setProcessingMemory] = useState(false);
+  const [processingMemories, setProcessingMemories] = useState(new Set());
+  const [loadingMemories, setLoadingMemories] = useState(new Set());
 
   useEffect(() => {
     loadProjects();
@@ -33,6 +34,26 @@ export default function Popup() {
       loadMemories(currentProject.id);
       chrome.storage.local.set({ currentProjectId: currentProject.id });
     }
+  }, [currentProject]);
+
+  useEffect(() => {
+    const handleMemoryProcessing = (request) => {
+      if (request.type === 'memoryProcessingStarted') {
+        setLoadingMemories(prev => new Set([...prev, request.memoryId]));
+      } else if (request.type === 'memoryProcessingComplete') {
+        setLoadingMemories(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(request.tempId || request.memoryId);
+          return newSet;
+        });
+        if (currentProject) {
+          loadMemories(currentProject.id);
+        }
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(handleMemoryProcessing);
+    return () => chrome.runtime.onMessage.removeListener(handleMemoryProcessing);
   }, [currentProject]);
 
   async function initializeVectorService() {
@@ -68,7 +89,6 @@ export default function Popup() {
     try {
       const memories = await db.memories.where('projectId').equals(projectId).toArray();
       setMemories(memories.sort((a, b) => b.timestamp - a.timestamp));
-      // Build graph connections in the background
       vectorService.buildGraphConnections(projectId).catch(console.error);
     } catch (error) {
       console.error('Error loading memories:', error);
@@ -142,119 +162,6 @@ export default function Popup() {
       console.error('Error deleting project:', error);
     }
   }
-
-  useEffect(() => {
-    const handleMemoryStatus = (request) => {
-      if (request.type === 'memoryProcessingStatus') {
-        setProcessingMemory(request.processing);
-        if (!request.processing) {
-          // Refresh memories when processing is complete
-          currentProject && loadMemories(currentProject.id);
-        }
-      }
-    };
-
-    chrome.runtime.onMessage.addListener(handleMemoryStatus);
-    return () => chrome.runtime.onMessage.removeListener(handleMemoryStatus);
-  }, [currentProject]);
-
-  const MemoryProcessingIndicator = () => (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 20 }}
-      className="memory-processing-indicator"
-    >
-      <div className="indicator-content">
-        <div className="processing-icon">
-          <svg className="animate-spin" viewBox="0 0 24 24">
-            <circle 
-              className="opacity-25" 
-              cx="12" 
-              cy="12" 
-              r="10" 
-              stroke="currentColor" 
-              strokeWidth="4"
-              fill="none"
-            />
-            <path 
-              className="opacity-75" 
-              fill="currentColor" 
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            />
-          </svg>
-        </div>
-        <div className="processing-text">
-          <span className="title">Processing Memory</span>
-          <span className="subtitle">Extracting technical details...</span>
-        </div>
-      </div>
-    </motion.div>
-  );
-
-  useEffect(() => {
-    const style = document.createElement('style');
-    style.textContent = `
-      .memory-processing-indicator {
-        position: fixed;
-        bottom: 24px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 50;
-        pointer-events: none;
-      }
-
-      .indicator-content {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(8px);
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-        padding: 12px 16px;
-        border-radius: 12px;
-      }
-
-      .processing-icon {
-        width: 24px;
-        height: 24px;
-        color: #6366f1;
-      }
-
-      .processing-text {
-        display: flex;
-        flex-direction: column;
-      }
-
-      .processing-text .title {
-        font-weight: 500;
-        color: #1d1d1f;
-        font-size: 14px;
-      }
-
-      .processing-text .subtitle {
-        color: #6b7280;
-        font-size: 12px;
-      }
-
-      @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
-      }
-
-      .animate-spin {
-        animation: spin 1s linear infinite;
-      }
-
-      @keyframes spin {
-        from { transform: rotate(0deg); }
-        to { transform: rotate(360deg); }
-      }
-    `;
-    document.head.appendChild(style);
-    return () => document.head.removeChild(style);
-  }, []);
 
   return (
     <div className="w-[400px] h-[600px] bg-gray-50 text-gray-900 font-space-grotesk overflow-hidden">
@@ -426,12 +333,15 @@ export default function Popup() {
                           ← Back to all memories
                         </button>
                       </div>
-                    ) : memories.length === 0 ? (
+                    ) : memories.length === 0 && loadingMemories.size === 0 ? (
                       <p className="text-center text-gray-500 py-8 animate-pulse">
                         No memories yet
                       </p>
                     ) : (
                       <div className="space-y-4">
+                        {Array.from(loadingMemories).map(id => (
+                          <Memory key={id} isLoading={true} />
+                        ))}
                         {memories.map(memory => (
                           <Memory
                             key={memory.id}
@@ -446,7 +356,6 @@ export default function Popup() {
               </>
             )}
           </main>
-          {processingMemory && <MemoryProcessingIndicator />}
         </>
       )}
     </div>

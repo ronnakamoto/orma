@@ -194,9 +194,47 @@ const parseCompressedContent = (content) => {
   };
 };
 
-function Memory({ memory, onDelete, onExport }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [showExportMenu, setShowExportMenu] = useState(false);
+// Skeleton loading component for Memory
+const MemorySkeleton = () => {
+  return (
+    <div className="bg-white rounded-xl p-4 mb-4 border border-gray-100/80 shadow-sm animate-pulse">
+      {/* Header skeleton */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <div className="h-5 w-5 bg-gray-200 rounded-md"></div>
+          <div className="h-4 w-32 bg-gray-200 rounded-md"></div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="h-5 w-5 bg-gray-200 rounded-md"></div>
+          <div className="h-5 w-5 bg-gray-200 rounded-md"></div>
+        </div>
+      </div>
+      
+      {/* Content skeleton */}
+      <div className="space-y-3">
+        <div className="h-4 w-3/4 bg-gray-200 rounded-md"></div>
+        <div className="h-4 w-full bg-gray-200 rounded-md"></div>
+        <div className="h-4 w-5/6 bg-gray-200 rounded-md"></div>
+      </div>
+      
+      {/* Code block skeleton */}
+      <div className="mt-4 rounded-xl border border-gray-100/80 p-4 bg-gray-50/80">
+        <div className="space-y-2">
+          <div className="h-3 w-full bg-gray-200 rounded-md"></div>
+          <div className="h-3 w-5/6 bg-gray-200 rounded-md"></div>
+          <div className="h-3 w-4/6 bg-gray-200 rounded-md"></div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+function Memory({ memory, onDelete, onExport, isLoading }) {
+  const [isExpanded, setIsExpanded] = useState(true);
+  
+  if (isLoading) {
+    return <MemorySkeleton />;
+  }
 
   const typeColors = {
     raw: "from-blue-500/10 to-blue-500/5 border-blue-100",

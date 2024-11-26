@@ -424,12 +424,6 @@ async function calculateImportance(content, existingMemories) {
 
 async function addMemory(content, projectId, metadata = {}) {
   try {
-    // Notify that processing has started
-    chrome.runtime.sendMessage({
-      type: 'memoryProcessingStatus',
-      processing: true
-    });
-
     console.log('=== Starting addMemory ===');
     console.log('Current buffer size:', shortTermBuffer.length);
 
@@ -448,6 +442,15 @@ async function addMemory(content, projectId, metadata = {}) {
       content,
       existingMemories
     );
+
+    // Generate a temporary ID for the memory
+    const tempId = Date.now().toString();
+
+    // Notify UI that memory processing has started with the temporary ID
+    chrome.runtime.sendMessage({
+      type: 'memoryProcessingStarted',
+      memoryId: tempId
+    });
 
     // Add to short-term buffer
     const newMemory = {
@@ -477,24 +480,31 @@ async function addMemory(content, projectId, metadata = {}) {
       await compressShortTermMemory(projectId);
     }
 
+    // Notify UI that memory processing is complete, including both IDs for cleanup
+    chrome.runtime.sendMessage({
+      type: 'memoryProcessingComplete',
+      memoryId: storedMemory.id,
+      tempId: tempId
+    });
+
     return storedMemory;
   } catch (error) {
     console.error("Error in addMemory:", error);
-    
-    // Notify that processing has failed
-    chrome.runtime.sendMessage({
-      type: 'memoryProcessingStatus',
-      processing: false,
-      error: error.message
-    });
-    
-    return await storeMemory({
+    const fallbackMemory = await storeMemory({
       content: `[${new Date().toISOString()}]\n${content}\n\nContext: Saved from webpage`,
       projectId,
       timestamp: Date.now(),
       type: "raw",
       importance: 5,
     });
+
+    // Notify UI of completion even in case of error
+    chrome.runtime.sendMessage({
+      type: 'memoryProcessingComplete',
+      memoryId: fallbackMemory.id
+    });
+
+    return fallbackMemory;
   }
 }
 
