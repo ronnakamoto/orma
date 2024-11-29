@@ -39,9 +39,333 @@ chrome.runtime.onInstalled.addListener(async () => {
 async function initializeContextMenu() {
   chrome.contextMenus.create({
     id: "save-to-orma",
-    title: "Save to Orma",
+    title: "Save selection to Orma",
     contexts: ["selection"],
   });
+  
+  chrome.contextMenus.create({
+    id: "save-page-to-orma",
+    title: "Save page to Orma",
+    contexts: ["page", "link"],
+  });
+}
+
+// Debug logging utility with content preview
+function debugLog(stage, message, data = null) {
+  const log = `[Orma Debug] ${stage}: ${message}`;
+  
+  // If data contains content, add a preview
+  if (data && (data.content || data.processedContent || data.rawContent)) {
+    const content = data.content || data.processedContent || data.rawContent;
+    const preview = content.length > 100 ? content.substring(0, 100) + '...' : content;
+    data.contentPreview = preview;
+  }
+  
+  console.log(log, data ? data : '');
+}
+
+// Process content using AI writer
+async function processWithAI(content) {
+  try {
+    if (!ai?.writer) {
+      debugLog('AI Processing', 'ai.writer is not available', { 
+        aiExists: !!ai, 
+        writerExists: false
+      });
+      return content;
+    }
+
+    debugLog('AI Processing', 'Creating AI writer instance');
+    const writer = await ai.writer.create();
+    
+    // Split content into chunks if it exceeds the token limit
+    const chunks = splitIntoChunks(content, TOKEN_LIMITS.NANO_CONTEXT);
+    let processedChunks = [];
+
+    for (const chunk of chunks) {
+      debugLog('AI Processing', 'Processing content chunk', {
+        chunkLength: chunk.length,
+        wordCount: chunk.split(/\s+/).length
+      });
+
+      const context = 
+        "You are an expert content analyst and writer. Transform this content into clear, well-organized notes.\n\n" +
+        "GUIDELINES:\n" +
+        "1. Structure & Organization:\n" +
+        "   • Break down complex topics into digestible bullet points\n" +
+        "   • Use clear hierarchical organization (main points → sub-points)\n" +
+        "   • Group related concepts together logically\n\n" +
+        "2. Content Treatment:\n" +
+        "   • Preserve precise terminology and specific details\n" +
+        "   • Clarify complex ideas without oversimplifying\n" +
+        "   • Keep numerical data, statistics, and exact specifications\n" +
+        "   • Include relevant examples and illustrations\n\n" +
+        "3. Writing Style:\n" +
+        "   • Use concise, clear language\n" +
+        "   • Maintain professional tone\n" +
+        "   • Employ consistent formatting\n" +
+        "   • Add brief explanations where needed\n\n" +
+        "OUTPUT FORMAT:\n" +
+        "MAIN CONCEPT:\n" +
+        "• Key point with clear explanation\n" +
+        "  - Supporting detail\n" +
+        "  - Evidence or example\n\n" +
+        "IMPORTANT DETAILS:\n" +
+        "• Specific information\n" +
+        "• Critical data points\n" +
+        "• Notable relationships\n\n" +
+        "EXAMPLES & APPLICATIONS: (if relevant)\n" +
+        "• Practical usage\n" +
+        "• Real-world scenarios\n" +
+        "• Case studies\n\n" +
+        "Note: Focus on accuracy and clarity. Aim for a readability level suitable for a knowledgeable audience in the subject area.";
+
+      const result = await writer.write(chunk, { 
+        context,
+        maxTokens: TOKEN_LIMITS.NANO_CONTEXT - 300 // Leave more room for detailed context
+      });
+
+      if (result?.trim()) {
+        processedChunks.push(result.trim());
+      }
+    }
+
+    // If we have multiple chunks, combine them with technical focus
+    if (processedChunks.length > 1) {
+      const combinationContext = 
+        "You are a technical documentation expert. Combine these technical extracts into a cohesive document.\n\n" +
+        "Requirements:\n" +
+        "1. Merge related technical concepts while maintaining detail\n" +
+        "2. Group similar implementations and examples\n" +
+        "3. Consolidate specifications and requirements\n" +
+        "4. Ensure all code examples are properly contextualized\n" +
+        "5. Maintain technical precision while improving clarity\n\n" +
+        "Format as a technical document with clear sections for:\n" +
+        "- Core Technical Concepts\n" +
+        "- Implementation Details\n" +
+        "- Code Examples\n" +
+        "- Technical Specifications\n\n" +
+        "Prioritize technical accuracy and clarity.";
+
+      const finalResult = await writer.write(processedChunks.join('\n---\n'), {
+        context: combinationContext,
+        maxTokens: TOKEN_LIMITS.NANO_CONTEXT - 200
+      });
+
+      return finalResult?.trim() || content;
+    }
+
+    return processedChunks[0] || content;
+
+  } catch (error) {
+    debugLog('AI Processing', 'Error processing with AI', { error });
+    return content;
+  }
+}
+
+// Helper function to split content into chunks
+function splitIntoChunks(text, tokenLimit) {
+  // Rough estimate: 1 token ≈ 4 characters for English text
+  const charsPerChunk = (tokenLimit - 200) * 4; // Leave room for context
+  const chunks = [];
+  
+  // Use sentence boundaries for more natural splits
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+  let currentChunk = '';
+
+  for (const sentence of sentences) {
+    if ((currentChunk + sentence).length > charsPerChunk) {
+      if (currentChunk) {
+        chunks.push(currentChunk.trim());
+        currentChunk = '';
+      }
+      // If a single sentence is too long, split it
+      if (sentence.length > charsPerChunk) {
+        const words = sentence.split(/\s+/);
+        let tempChunk = '';
+        for (const word of words) {
+          if ((tempChunk + ' ' + word).length > charsPerChunk) {
+            chunks.push(tempChunk.trim());
+            tempChunk = word;
+          } else {
+            tempChunk += (tempChunk ? ' ' : '') + word;
+          }
+        }
+        if (tempChunk) {
+          currentChunk = tempChunk;
+        }
+      } else {
+        currentChunk = sentence;
+      }
+    } else {
+      currentChunk += (currentChunk ? ' ' : '') + sentence;
+    }
+  }
+
+  if (currentChunk) {
+    chunks.push(currentChunk.trim());
+  }
+
+  return chunks;
+}
+
+async function extractPageContent(tabId) {
+  debugLog('Extraction', 'Starting content extraction', { tabId });
+  
+  try {
+    // Extract the raw content from the page
+    const [{ result: rawContent }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const debug = (stage, message, data = null) => {
+          console.log(`[Orma Debug - Content Script] ${stage}: ${message}`, data ? data : '');
+        };
+
+        try {
+          debug('DOM', 'Starting content extraction');
+
+          // Function to extract text content from an element
+          const extractText = (element) => {
+            if (!element) return '';
+
+            // Get all text nodes
+            const textNodes = [];
+            const walk = document.createTreeWalker(
+              element,
+              NodeFilter.SHOW_TEXT,
+              {
+                acceptNode: (node) => {
+                  // Skip hidden elements
+                  let parent = node.parentElement;
+                  while (parent) {
+                    const style = window.getComputedStyle(parent);
+                    if (style.display === 'none' || style.visibility === 'hidden') {
+                      return NodeFilter.FILTER_REJECT;
+                    }
+                    parent = parent.parentElement;
+                  }
+                  
+                  // Accept non-empty text nodes
+                  return node.textContent.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+                }
+              }
+            );
+
+            let node;
+            while (node = walk.nextNode()) {
+              const parent = node.parentElement;
+              if (parent) {
+                const tagName = parent.tagName.toLowerCase();
+                const text = node.textContent.trim();
+
+                // Skip common UI elements
+                if (parent.getAttribute('role') === 'button' ||
+                    parent.onclick ||
+                    parent.classList.contains('button') ||
+                    parent.classList.contains('btn') ||
+                    /btn|button|nav|menu|sidebar|widget|popup|modal|cookie|newsletter|social|share/.test(parent.className)) {
+                  continue;
+                }
+
+                // Format based on element type
+                if (/^h[1-6]$/.test(tagName)) {
+                  textNodes.push(`\n# ${text}\n`);
+                } else if (tagName === 'li') {
+                  textNodes.push(`\n- ${text}`);
+                } else if (tagName === 'p' || (tagName === 'div' && text.length > 30)) {
+                  textNodes.push(`\n${text}\n`);
+                } else if (text.length > 20 || text.includes('.')) {
+                  textNodes.push(text);
+                }
+              }
+            }
+
+            return textNodes.join(' ');
+          };
+
+          // Try to find the main content container
+          const selectors = [
+            'article',
+            '[role="main"]',
+            'main',
+            '#main-content',
+            '.main-content',
+            '.article-content',
+            '.post-content',
+            '.entry-content',
+            '.content',
+            '#content'
+          ];
+
+          let mainContent = null;
+          for (const selector of selectors) {
+            const element = document.querySelector(selector);
+            if (element) {
+              const text = extractText(element);
+              if (text.length > 200) {  // Reasonable content length
+                mainContent = text;
+                debug('Content', `Found main content using selector: ${selector}`, {
+                  length: text.length
+                });
+                break;
+              }
+            }
+          }
+
+          // Fallback to body if no main content found
+          if (!mainContent) {
+            debug('Content', 'No main content found, extracting from body');
+            mainContent = extractText(document.body);
+          }
+
+          // Clean up the extracted content
+          const cleanContent = mainContent
+            .replace(/\s+/g, ' ')
+            .replace(/\n\s+/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+
+          debug('Content', 'Content extracted', {
+            length: cleanContent.length,
+            preview: cleanContent.substring(0, 100) + '...'
+          });
+
+          return cleanContent;
+        } catch (error) {
+          debug('Error', 'Content extraction failed', { 
+            error: error.message,
+            stack: error.stack 
+          });
+          return '';
+        }
+      },
+    });
+
+    debugLog('Extraction', 'Raw content extracted', {
+      contentLength: rawContent?.length || 0,
+      hasContent: !!rawContent,
+      preview: rawContent?.substring(0, 100)
+    });
+
+    if (!rawContent) {
+      throw new Error('No content found on page');
+    }
+
+    // Process the content with AI
+    const processedContent = await processWithAI(rawContent);
+    
+    debugLog('Final', 'Content processing complete', {
+      rawLength: rawContent.length,
+      processedLength: processedContent.length,
+      success: processedContent.length > 0
+    });
+
+    return processedContent;
+
+  } catch (error) {
+    debugLog('Error', 'Content extraction failed', { error: error.message });
+    throw new Error(`Could not extract page content: ${error.message}`);
+  }
 }
 
 async function showNotification(tab, message, style = "info") {
@@ -100,7 +424,7 @@ async function calculateImportance(content, existingMemories) {
   };
 }
 
-async function addMemory(content, projectId) {
+async function addMemory(content, projectId, metadata = {}) {
   try {
     console.log('=== Starting addMemory ===');
     console.log('Current buffer size:', shortTermBuffer.length);
@@ -121,12 +445,22 @@ async function addMemory(content, projectId) {
       existingMemories
     );
 
+    // Generate a temporary ID for the memory
+    const tempId = Date.now().toString();
+
+    // Notify UI that memory processing has started with the temporary ID
+    chrome.runtime.sendMessage({
+      type: 'memoryProcessingStarted',
+      memoryId: tempId
+    });
+
     // Add to short-term buffer
     const newMemory = {
       content: memoryContent,
       timestamp: Date.now(),
       projectId,
       importance,
+      metadata
     };
     
     shortTermBuffer.push(newMemory);
@@ -139,6 +473,7 @@ async function addMemory(content, projectId) {
       timestamp: Date.now(),
       type: "raw",
       importance,
+      metadata
     });
 
     // Check if buffer needs compression
@@ -147,16 +482,31 @@ async function addMemory(content, projectId) {
       await compressShortTermMemory(projectId);
     }
 
+    // Notify UI that memory processing is complete, including both IDs for cleanup
+    chrome.runtime.sendMessage({
+      type: 'memoryProcessingComplete',
+      memoryId: storedMemory.id,
+      tempId: tempId
+    });
+
     return storedMemory;
   } catch (error) {
     console.error("Error in addMemory:", error);
-    return await storeMemory({
+    const fallbackMemory = await storeMemory({
       content: `[${new Date().toISOString()}]\n${content}\n\nContext: Saved from webpage`,
       projectId,
       timestamp: Date.now(),
       type: "raw",
       importance: 5,
     });
+
+    // Notify UI of completion even in case of error
+    chrome.runtime.sendMessage({
+      type: 'memoryProcessingComplete',
+      memoryId: fallbackMemory.id
+    });
+
+    return fallbackMemory;
   }
 }
 
@@ -253,7 +603,9 @@ async function compressShortTermMemory(projectId) {
 
     // Remove compressed raw memories from buffer
     const compressedTimestamps = new Set(rawMemoriesToCompress.map(m => m.timestamp));
-    shortTermBuffer = shortTermBuffer.filter(m => !compressedTimestamps.has(m.timestamp));
+    shortTermBuffer = shortTermBuffer.filter(memory => 
+      !compressedTimestamps.has(memory.timestamp)
+    );
     
     console.log('Compression complete');
     console.log('New buffer size:', shortTermBuffer.length);
@@ -320,9 +672,9 @@ async function compressMemories(memories, projectId) {
           .join('\n\n');
 
         const summary = await summarizer.summarize(
-          `Synthesize these related memories:\n\n${content}\n\n` +
-          `Format as:\nSUMMARY:\n[core insights]\nKEY POINTS:\n[bullets]\n` +
-          `RELATIONSHIPS:\n[links]\nDETAILS:\n[specifics]`
+          `${content}\n\nCreate a concise synthesis. Format as:\n` +
+          `SUMMARY:\n[core insights]\n\nKEY POINTS:\n[Bullet points]\n\n` +
+          `RELATIONSHIPS:\n[Connections]\n\nDETAILS:\n[Important specifics]`
         );
 
         return {
@@ -683,6 +1035,118 @@ async function getProject(projectId) {
   }
 }
 
+// Advanced sliding window algorithm optimized for Nano AI's 1024 token context window
+async function processMemoriesWithSlidingWindow(memories, projectId) {
+  const NANO_CONTEXT_SIZE = 1024;
+  const maxWindowSize = Math.floor(NANO_CONTEXT_SIZE * 0.8); // 819 tokens for main content
+  const minWindowSize = Math.floor(NANO_CONTEXT_SIZE * 0.2); // 204 tokens minimum chunk
+  const overlapSize = Math.floor(NANO_CONTEXT_SIZE * 0.1); // 102 tokens overlap
+  
+  try {
+    let processedMemories = [];
+    let currentWindow = [];
+    let currentTokens = 0;
+    let windowStart = 0;
+    
+    // Helper to detect natural fact boundaries (optimized for smaller chunks)
+    const isFactBoundary = (memory) => {
+      const content = memory.content;
+      // Prioritize stronger boundaries for smaller chunks
+      if (/^#|^\s*[-*•]/.test(content)) return 2; // Strong boundary (heading/list)
+      if (/[.!?]\s*$/.test(content)) return 1;   // Medium boundary (sentence)
+      if (/\n\s*\n/.test(content)) return 0.5;   // Weak boundary (paragraph)
+      return 0;                                   // No natural boundary
+    };
+    
+    // Helper to estimate optimal window size based on content density
+    const getOptimalWindowSize = (memories, start) => {
+      const nextFewMemories = memories.slice(start, Math.min(start + 3, memories.length));
+      const avgDensity = nextFewMemories.reduce((sum, m) => {
+        // Calculate content density score
+        const codeBlockCount = (m.content.match(/```/g) || []).length;
+        const listItemCount = (m.content.match(/^\s*[-*•]/gm) || []).length;
+        const sentenceCount = (m.content.match(/[.!?]\s/g) || []).length;
+        
+        // Density score: higher means more complex content
+        const density = (codeBlockCount * 3 + listItemCount * 2 + sentenceCount) / 
+                       Math.max(1, m.content.length / 100);
+        return sum + density;
+      }, 0) / nextFewMemories.length;
+      
+      // Adjust window size inversely to density
+      // Dense content = smaller windows for better processing
+      const sizeMultiplier = 1 / (1 + Math.min(avgDensity, 1));
+      return Math.max(minWindowSize, 
+             Math.min(maxWindowSize, Math.floor(maxWindowSize * sizeMultiplier)));
+    };
+
+    while (windowStart < memories.length) {
+      const optimalSize = getOptimalWindowSize(memories, windowStart);
+      let windowEnd = windowStart;
+      currentTokens = 0;
+      currentWindow = [];
+      let bestBoundaryScore = -1;
+      let bestBoundaryIndex = -1;
+      
+      // Build window while respecting token limit and looking for natural boundaries
+      while (windowEnd < memories.length) {
+        const nextMemory = memories[windowEnd];
+        const nextTokens = estimateTokens(nextMemory.content);
+        
+        if (currentTokens + nextTokens > optimalSize) {
+          // If we found any good boundaries, use the best one
+          if (bestBoundaryIndex >= 0) {
+            windowEnd = bestBoundaryIndex + 1;
+            currentWindow = memories.slice(windowStart, windowEnd);
+          }
+          break;
+        }
+        
+        // Track the best boundary we've seen
+        const boundaryScore = isFactBoundary(nextMemory);
+        if (boundaryScore > bestBoundaryScore) {
+          bestBoundaryScore = boundaryScore;
+          bestBoundaryIndex = windowEnd;
+        }
+        
+        currentWindow.push(nextMemory);
+        currentTokens += nextTokens;
+        windowEnd++;
+      }
+      
+      if (currentWindow.length > 0) {
+        // Process window with minimal but essential context
+        const contextWindow = processedMemories.length > 0 
+          ? [processedMemories[processedMemories.length - 1]] // Just one previous memory for context
+          : [];
+          
+        const processedWindow = await compressMemories(
+          [...contextWindow, ...currentWindow],
+          projectId
+        );
+        
+        processedMemories.push(...processedWindow);
+        
+        // Slide window with minimal overlap to stay within token limits
+        windowStart = Math.max(
+          windowStart + 1,
+          windowEnd - Math.ceil(overlapSize / Math.max(50, estimateTokens(currentWindow[0].content)))
+        );
+      } else {
+        // Emergency fallback: process single memory
+        const singleMemory = await compressRawMemoriesOnly([memories[windowStart]], projectId);
+        if (singleMemory) processedMemories.push(singleMemory);
+        windowStart++;
+      }
+    }
+    
+    return processedMemories.filter(Boolean);
+  } catch (error) {
+    console.error('Error in sliding window processing:', error);
+    return compressRawMemoriesOnly(memories, projectId);
+  }
+}
+
 // Context Menu Handler
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "save-to-orma") {
@@ -703,4 +1167,138 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       await showNotification(tab, "Error saving to Orma: " + error.message, "error");
     }
   }
+  if (info.menuItemId === "save-page-to-orma") {
+    try {
+      const { currentProjectId } = await chrome.storage.local.get("currentProjectId");
+
+      if (!currentProjectId) {
+        await showNotification(tab, "Please select a project in Orma first", "error");
+        return;
+      }
+
+      await showNotification(tab, "Extracting page content...", "info");
+      const pageContent = await extractPageContent(tab.id);
+      
+      if (!pageContent) {
+        await showNotification(tab, "Could not extract page content", "error");
+        return;
+      }
+
+      const metadata = {
+        source: tab.url,
+        title: tab.title,
+        timestamp: new Date().toISOString()
+      };
+
+      await addMemory(pageContent, currentProjectId, metadata);
+      await showNotification(tab, "Page saved to Orma memory!", "success");
+    } catch (error) {
+      console.error("Error saving page:", error);
+      await showNotification(tab, "Error saving to Orma: " + error.message, "error");
+    }
+  }
 });
+
+async function generateMemoryContent(extractedContent, url, title) {
+  const prompt = `You are a precise and elegant note-taking assistant. Create a beautifully structured memory from the following webpage content. Focus on clarity, elegance, and meaningful insights.
+
+Format the response in clean sections:
+
+SUMMARY:
+A concise, well-crafted overview that captures the essence in 2-3 sentences.
+
+KEY POINTS:
+• Highlight key insights with elegant bullet points
+• Each point should be clear and meaningful
+• Use proper markdown for emphasis where needed
+• If code is involved, format it properly with language tags
+
+RELATIONSHIPS:
+• Note connections to relevant concepts
+• Highlight technical dependencies if present
+• Identify key technologies or frameworks mentioned
+
+DETAILS:
+Present important details in a clean, organized manner. Use proper markdown formatting:
+- Use headings (##) for subsections
+- Format code snippets with proper language tags
+- Use *emphasis* for important terms
+- Create tables if data is structured
+- Use > for important quotes
+
+Source Memories:
+1. Format source URLs elegantly
+2. Include relevant section titles
+3. Note specific references
+
+Content to analyze:
+Title: ${title}
+URL: ${url}
+Content:
+${extractedContent}`;
+
+  try {
+    const response = await ai.writer.writeText(prompt);
+    return response;
+  } catch (error) {
+    console.error('Error generating memory:', error);
+    return null;
+  }
+}
+
+function formatCodeInContent(content) {
+  // Format code blocks with proper language detection
+  content = content.replace(/```([\s\S]*?)```/g, (match, code) => {
+    const lines = code.trim().split('\n');
+    let language = 'text';
+    
+    // Detect language from common patterns
+    if (lines[0].includes('function') || lines[0].includes('const') || lines[0].includes('let')) {
+      language = 'javascript';
+    } else if (lines[0].includes('def ') || lines[0].includes('import ')) {
+      language = 'python';
+    } else if (lines[0].includes('<') && lines[0].includes('>')) {
+      language = 'html';
+    }
+    
+    return '```' + language + '\n' + code.trim() + '\n```';
+  });
+
+  // Format inline code
+  content = content.replace(/`([^`]+)`/g, (match, code) => {
+    return '`' + code.trim() + '`';
+  });
+
+  return content;
+}
+
+async function processContent(content, url) {
+  try {
+    const title = await getCurrentTabTitle();
+    let memoryContent = await generateMemoryContent(content, url, title);
+    
+    if (memoryContent) {
+      // Format code blocks and inline code
+      memoryContent = formatCodeInContent(memoryContent);
+      
+      // Ensure consistent section spacing
+      memoryContent = memoryContent.replace(/\n{3,}/g, '\n\n');
+      
+      // Format bullet points consistently
+      memoryContent = memoryContent.replace(/^[•●-]\s*/gm, '• ');
+      
+      // Format numbered lists consistently
+      memoryContent = memoryContent.replace(/^\d+\.\s+/gm, (match) => {
+        return match.trim() + ' ';
+      });
+      
+      // Add proper spacing around headings
+      memoryContent = memoryContent.replace(/^(#+.*?)$/gm, '\n$1\n');
+    }
+    
+    return memoryContent;
+  } catch (error) {
+    console.error('Error processing content:', error);
+    return null;
+  }
+}

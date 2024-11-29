@@ -126,3 +126,10 @@ body {
   .font-bold {
     font-weight: 700;
   }
+
+  .language-indicator {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 20;
+  }

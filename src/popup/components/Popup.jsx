@@ -21,6 +21,8 @@ export default function Popup() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [searching, setSearching] = useState(false);
+  const [processingMemories, setProcessingMemories] = useState(new Set());
+  const [loadingMemories, setLoadingMemories] = useState(new Set());
 
   useEffect(() => {
     loadProjects();
@@ -32,6 +34,26 @@ export default function Popup() {
       loadMemories(currentProject.id);
       chrome.storage.local.set({ currentProjectId: currentProject.id });
     }
+  }, [currentProject]);
+
+  useEffect(() => {
+    const handleMemoryProcessing = (request) => {
+      if (request.type === 'memoryProcessingStarted') {
+        setLoadingMemories(prev => new Set([...prev, request.memoryId]));
+      } else if (request.type === 'memoryProcessingComplete') {
+        setLoadingMemories(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(request.tempId || request.memoryId);
+          return newSet;
+        });
+        if (currentProject) {
+          loadMemories(currentProject.id);
+        }
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(handleMemoryProcessing);
+    return () => chrome.runtime.onMessage.removeListener(handleMemoryProcessing);
   }, [currentProject]);
 
   async function initializeVectorService() {
@@ -67,7 +89,6 @@ export default function Popup() {
     try {
       const memories = await db.memories.where('projectId').equals(projectId).toArray();
       setMemories(memories.sort((a, b) => b.timestamp - a.timestamp));
-      // Build graph connections in the background
       vectorService.buildGraphConnections(projectId).catch(console.error);
     } catch (error) {
       console.error('Error loading memories:', error);
@@ -312,12 +333,15 @@ export default function Popup() {
                           ← Back to all memories
                         </button>
                       </div>
-                    ) : memories.length === 0 ? (
+                    ) : memories.length === 0 && loadingMemories.size === 0 ? (
                       <p className="text-center text-gray-500 py-8 animate-pulse">
                         No memories yet
                       </p>
                     ) : (
                       <div className="space-y-4">
+                        {Array.from(loadingMemories).map(id => (
+                          <Memory key={id} isLoading={true} />
+                        ))}
                         {memories.map(memory => (
                           <Memory
                             key={memory.id}

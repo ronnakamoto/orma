@@ -27,14 +27,5 @@
       "js": ["js/content.js"],
       "css": ["css/app.css"]
     }
-    /* Temporarily disabled ChatGPT context injection
-    ,{
-      "matches": [
-        "https://chat.openai.com/*",
-        "https://chatgpt.com/*"
-      ],
-      "js": ["js/chatgpt-content.js"]
-    }
-    */
   ]
 }
