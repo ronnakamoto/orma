@@ -238,7 +238,7 @@ class VectorService {
             You have access to the project's memories and context.
             When responding:
             1. Base your responses on the provided context memories
-            2. Cite specific memories using their ID (e.g., [Memory 123])
+            2. Do not cite or reference specific memories in your response
             3. If you're unsure about something, acknowledge the limitations of your knowledge
             4. Keep responses concise but informative
             5. Maintain a friendly, conversational tone while being professional`

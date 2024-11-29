@@ -336,8 +336,7 @@ function Memory({ memory, onDelete, onExport, isLoading }) {
         ) : (
           <>
             {renderSection(null, parsedContent.content)}
-            {parsedContent.context &&
-              renderSection("Context", parsedContent.context)}
+            {renderSection("Context", memory.metadata?.source || "Saved from webpage")}
           </>
         )}
       </div>
