@@ -89,34 +89,36 @@ async function processWithAI(content) {
       });
 
       const context = 
-        "You are a technical documentation expert. Extract and clarify technical information from this content.\n\n" +
-        "Focus on:\n" +
-        "1. Technical concepts, methods, and implementations\n" +
-        "2. Code examples and their explanations\n" +
-        "3. System architectures and design patterns\n" +
-        "4. Configuration details and parameters\n" +
-        "5. API specifications and usage examples\n\n" +
-        "For each technical detail:\n" +
-        "- Clarify complex concepts using precise, technical language\n" +
-        "- Preserve exact method names, parameters, and return values\n" +
-        "- Include specific version numbers and compatibility requirements\n" +
-        "- Maintain accuracy of technical specifications\n" +
-        "- Rewrite for clarity while keeping technical accuracy\n\n" +
-        "Format the output as:\n" +
-        "TECHNICAL DETAILS:\n" +
-        "• [Detail with clarification]\n" +
-        "• [Implementation specifics]\n" +
-        "• [Usage examples]\n\n" +
-        "CODE EXAMPLES: (if present)\n" +
-        "```[language]\n" +
-        "[code]\n" +
-        "```\n" +
-        "- [Explanation of the code]\n\n" +
-        "SPECIFICATIONS: (if applicable)\n" +
-        "- [Technical requirements]\n" +
-        "- [Version constraints]\n" +
-        "- [Dependencies]\n\n" +
-        "Note: Focus solely on technical content. Ignore marketing text, UI elements, or general descriptions.";
+        "You are an expert content analyst and writer. Transform this content into clear, well-organized notes.\n\n" +
+        "GUIDELINES:\n" +
+        "1. Structure & Organization:\n" +
+        "   • Break down complex topics into digestible bullet points\n" +
+        "   • Use clear hierarchical organization (main points → sub-points)\n" +
+        "   • Group related concepts together logically\n\n" +
+        "2. Content Treatment:\n" +
+        "   • Preserve precise terminology and specific details\n" +
+        "   • Clarify complex ideas without oversimplifying\n" +
+        "   • Keep numerical data, statistics, and exact specifications\n" +
+        "   • Include relevant examples and illustrations\n\n" +
+        "3. Writing Style:\n" +
+        "   • Use concise, clear language\n" +
+        "   • Maintain professional tone\n" +
+        "   • Employ consistent formatting\n" +
+        "   • Add brief explanations where needed\n\n" +
+        "OUTPUT FORMAT:\n" +
+        "MAIN CONCEPT:\n" +
+        "• Key point with clear explanation\n" +
+        "  - Supporting detail\n" +
+        "  - Evidence or example\n\n" +
+        "IMPORTANT DETAILS:\n" +
+        "• Specific information\n" +
+        "• Critical data points\n" +
+        "• Notable relationships\n\n" +
+        "EXAMPLES & APPLICATIONS: (if relevant)\n" +
+        "• Practical usage\n" +
+        "• Real-world scenarios\n" +
+        "• Case studies\n\n" +
+        "Note: Focus on accuracy and clarity. Aim for a readability level suitable for a knowledgeable audience in the subject area.";
 
       const result = await writer.write(chunk, { 
         context,
@@ -1030,6 +1032,118 @@ async function getProject(projectId) {
   } catch (error) {
     console.error('Error getting project:', error);
     throw error;
+  }
+}
+
+// Advanced sliding window algorithm optimized for Nano AI's 1024 token context window
+async function processMemoriesWithSlidingWindow(memories, projectId) {
+  const NANO_CONTEXT_SIZE = 1024;
+  const maxWindowSize = Math.floor(NANO_CONTEXT_SIZE * 0.8); // 819 tokens for main content
+  const minWindowSize = Math.floor(NANO_CONTEXT_SIZE * 0.2); // 204 tokens minimum chunk
+  const overlapSize = Math.floor(NANO_CONTEXT_SIZE * 0.1); // 102 tokens overlap
+  
+  try {
+    let processedMemories = [];
+    let currentWindow = [];
+    let currentTokens = 0;
+    let windowStart = 0;
+    
+    // Helper to detect natural fact boundaries (optimized for smaller chunks)
+    const isFactBoundary = (memory) => {
+      const content = memory.content;
+      // Prioritize stronger boundaries for smaller chunks
+      if (/^#|^\s*[-*•]/.test(content)) return 2; // Strong boundary (heading/list)
+      if (/[.!?]\s*$/.test(content)) return 1;   // Medium boundary (sentence)
+      if (/\n\s*\n/.test(content)) return 0.5;   // Weak boundary (paragraph)
+      return 0;                                   // No natural boundary
+    };
+    
+    // Helper to estimate optimal window size based on content density
+    const getOptimalWindowSize = (memories, start) => {
+      const nextFewMemories = memories.slice(start, Math.min(start + 3, memories.length));
+      const avgDensity = nextFewMemories.reduce((sum, m) => {
+        // Calculate content density score
+        const codeBlockCount = (m.content.match(/```/g) || []).length;
+        const listItemCount = (m.content.match(/^\s*[-*•]/gm) || []).length;
+        const sentenceCount = (m.content.match(/[.!?]\s/g) || []).length;
+        
+        // Density score: higher means more complex content
+        const density = (codeBlockCount * 3 + listItemCount * 2 + sentenceCount) / 
+                       Math.max(1, m.content.length / 100);
+        return sum + density;
+      }, 0) / nextFewMemories.length;
+      
+      // Adjust window size inversely to density
+      // Dense content = smaller windows for better processing
+      const sizeMultiplier = 1 / (1 + Math.min(avgDensity, 1));
+      return Math.max(minWindowSize, 
+             Math.min(maxWindowSize, Math.floor(maxWindowSize * sizeMultiplier)));
+    };
+
+    while (windowStart < memories.length) {
+      const optimalSize = getOptimalWindowSize(memories, windowStart);
+      let windowEnd = windowStart;
+      currentTokens = 0;
+      currentWindow = [];
+      let bestBoundaryScore = -1;
+      let bestBoundaryIndex = -1;
+      
+      // Build window while respecting token limit and looking for natural boundaries
+      while (windowEnd < memories.length) {
+        const nextMemory = memories[windowEnd];
+        const nextTokens = estimateTokens(nextMemory.content);
+        
+        if (currentTokens + nextTokens > optimalSize) {
+          // If we found any good boundaries, use the best one
+          if (bestBoundaryIndex >= 0) {
+            windowEnd = bestBoundaryIndex + 1;
+            currentWindow = memories.slice(windowStart, windowEnd);
+          }
+          break;
+        }
+        
+        // Track the best boundary we've seen
+        const boundaryScore = isFactBoundary(nextMemory);
+        if (boundaryScore > bestBoundaryScore) {
+          bestBoundaryScore = boundaryScore;
+          bestBoundaryIndex = windowEnd;
+        }
+        
+        currentWindow.push(nextMemory);
+        currentTokens += nextTokens;
+        windowEnd++;
+      }
+      
+      if (currentWindow.length > 0) {
+        // Process window with minimal but essential context
+        const contextWindow = processedMemories.length > 0 
+          ? [processedMemories[processedMemories.length - 1]] // Just one previous memory for context
+          : [];
+          
+        const processedWindow = await compressMemories(
+          [...contextWindow, ...currentWindow],
+          projectId
+        );
+        
+        processedMemories.push(...processedWindow);
+        
+        // Slide window with minimal overlap to stay within token limits
+        windowStart = Math.max(
+          windowStart + 1,
+          windowEnd - Math.ceil(overlapSize / Math.max(50, estimateTokens(currentWindow[0].content)))
+        );
+      } else {
+        // Emergency fallback: process single memory
+        const singleMemory = await compressRawMemoriesOnly([memories[windowStart]], projectId);
+        if (singleMemory) processedMemories.push(singleMemory);
+        windowStart++;
+      }
+    }
+    
+    return processedMemories.filter(Boolean);
+  } catch (error) {
+    console.error('Error in sliding window processing:', error);
+    return compressRawMemoriesOnly(memories, projectId);
   }
 }
 

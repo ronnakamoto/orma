@@ -24,7 +24,7 @@ const MarkdownComponents = {
     return !inline ? (
       <div className="relative group">
         <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <span className="text-xs font-medium text-gray-400 bg-gray-800/70 px-2 py-1 rounded-md">
+          <span className="text-xs font-medium text-gray-400 bg-gray-800/70 px-2 py-1 rounded-md language-indicator">
             {language}
           </span>
         </div>
