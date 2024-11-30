@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import db from './db';
+import { processWithAI } from '../background';
 
 class VectorService {
   constructor() {
@@ -238,7 +239,7 @@ class VectorService {
             You have access to the project's memories and context.
             When responding:
             1. Base your responses on the provided context memories
-            2. Cite specific memories using their ID (e.g., [Memory 123])
+            2. Do not cite or reference specific memories in your response
             3. If you're unsure about something, acknowledge the limitations of your knowledge
             4. Keep responses concise but informative
             5. Maintain a friendly, conversational tone while being professional`
@@ -424,6 +425,66 @@ Guidelines for generating key points:
     }
     
     return questions;
+  }
+
+  // Rewrite a memory with fresh content while preserving its ID
+  async rewriteMemory(memoryId, projectId) {
+    if (!this.openai) {
+      throw new Error('Vector service not initialized');
+    }
+
+    try {
+      // Get the original memory
+      const memory = await db.memories.get(memoryId);
+      if (!memory) {
+        throw new Error('Memory not found');
+      }
+
+      // Get the original source content
+      const sourceContent = memory.type === 'compressed' 
+        ? memory.metadata?.originalContent || memory.content
+        : memory.content;
+
+      let newContent;
+      if (memory.type === 'compressed') {
+        // For compressed memories, get similar memories and regenerate
+        const similarMemories = await this.findSimilarMemories(sourceContent, projectId);
+        newContent = await this.compressShortTermMemory(
+          [{ ...memory, content: sourceContent }, ...similarMemories.filter(m => m.id !== memoryId)]
+        );
+      } else {
+        // For raw memories, use the existing processWithAI function
+        newContent = await processWithAI(sourceContent);
+      }
+
+      if (!newContent) {
+        throw new Error('Failed to generate new memory content');
+      }
+
+      // Generate new embedding for the rewritten content
+      const embedding = await this.generateEmbedding(newContent);
+
+      // Update the memory with new content and embedding
+      const updatedMemory = {
+        ...memory,
+        content: newContent,
+        metadata: {
+          ...memory.metadata,
+          embedding,
+          rewritten: true,
+          originalContent: sourceContent,
+          rewrittenAt: new Date().toISOString()
+        }
+      };
+
+      await db.updateMemory(memoryId, updatedMemory);
+      await this.buildGraphConnections(projectId);
+
+      return updatedMemory;
+    } catch (error) {
+      console.error('Error rewriting memory:', error);
+      throw error;
+    }
   }
 }
 

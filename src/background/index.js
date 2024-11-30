@@ -2,20 +2,23 @@ const TOKEN_LIMITS = {
   SHORT_TERM: 5,
   LONG_TERM: 10000,
   BUFFER_COMPRESSION: 20,
-  NANO_CONTEXT: 1024, // Total context window size
-  NANO_OVERHEAD: 26, // Tokens used by the model
-  NANO_AVAILABLE: 998, // NANO_CONTEXT - NANO_OVERHEAD
-  CHARS_PER_TOKEN: 4, // Approximate number of characters per token
-  PROMPT_RESERVE: 200,    // Reserve tokens for the compression prompt
-  SUMMARY_RESERVE: 100,   // Reserve tokens for compressed memory summaries
-  OUTPUT_RESERVE: 300,    // Reserve tokens for expected output structure
+  NANO_CONTEXT: 4000, // Total context window size
+  NANO_OVERHEAD: 500, // Tokens used by system prompts and formatting
+  NANO_AVAILABLE: 3500, // NANO_CONTEXT - NANO_OVERHEAD
+  CHARS_PER_TOKEN: 1, // 1:1 ratio of characters to tokens
+  PROMPT_RESERVE: 1000,    // Reserve tokens for the compression prompt
+  SUMMARY_RESERVE: 500,   // Reserve tokens for compressed memory summaries
+  OUTPUT_RESERVE: 1000,    // Reserve tokens for expected output structure
 };
 
 import db from '../services/db';
 import { vectorService } from '../services/vectorService';
 
 function estimateTokens(text) {
-  return Math.ceil(text.length / TOKEN_LIMITS.CHARS_PER_TOKEN);
+  if (!text) return 0;
+  
+  // Simple 1:1 character to token ratio
+  return text.length;
 }
 
 let shortTermBuffer = [];
@@ -64,8 +67,56 @@ function debugLog(stage, message, data = null) {
   console.log(log, data ? data : '');
 }
 
+// Clean and extract meaningful text using AI
+async function preprocessContent(content) {
+  if (!ai?.writer) {
+    debugLog('Content Preprocessing', 'ai.writer not available, using raw content');
+    return content;
+  }
+
+  try {
+    debugLog('Content Preprocessing', 'Starting text extraction', {
+      inputLength: content.length,
+      estimatedTokens: estimateTokens(content)
+    });
+
+    const writer = await ai.writer.create();
+    const context = 
+      "You are a text extraction expert. Extract and clean the main content while:\n" +
+      "1. Preserve all meaningful information\n" +
+      "2. Remove redundant formatting and noise\n" +
+      "3. Fix any broken sentences or formatting\n" +
+      "4. Maintain technical accuracy\n" +
+      "5. Keep code blocks and technical terms intact\n" +
+      "6. Use proper punctuation and spacing\n\n" +
+      "Output only the cleaned content without any explanations or metadata.";
+
+    const cleanedContent = await writer.write(content, {
+      context,
+      maxTokens: TOKEN_LIMITS.NANO_AVAILABLE - TOKEN_LIMITS.PROMPT_RESERVE
+    });
+
+    if (!cleanedContent?.trim()) {
+      debugLog('Content Preprocessing', 'No content after cleaning, using original');
+      return content;
+    }
+
+    debugLog('Content Preprocessing', 'Finished text extraction', {
+      originalLength: content.length,
+      cleanedLength: cleanedContent.length,
+      originalTokens: estimateTokens(content),
+      cleanedTokens: estimateTokens(cleanedContent)
+    });
+
+    return cleanedContent.trim();
+  } catch (error) {
+    debugLog('Content Preprocessing', 'Error during preprocessing', { error });
+    return content;
+  }
+}
+
 // Process content using AI writer
-async function processWithAI(content) {
+export async function processWithAI(content) {
   try {
     if (!ai?.writer) {
       debugLog('AI Processing', 'ai.writer is not available', { 
@@ -75,87 +126,117 @@ async function processWithAI(content) {
       return content;
     }
 
-    debugLog('AI Processing', 'Creating AI writer instance');
-    const writer = await ai.writer.create();
+    debugLog('AI Processing', 'Starting content processing');
+    
+    // First, preprocess the content
+    const cleanedContent = await preprocessContent(content);
     
     // Split content into chunks if it exceeds the token limit
-    const chunks = splitIntoChunks(content, TOKEN_LIMITS.NANO_CONTEXT);
-    let processedChunks = [];
+    const chunks = splitIntoChunks(cleanedContent, TOKEN_LIMITS.NANO_CONTEXT);
+    debugLog('AI Processing', `Processing ${chunks.length} chunks`);
 
-    for (const chunk of chunks) {
-      debugLog('AI Processing', 'Processing content chunk', {
-        chunkLength: chunk.length,
-        wordCount: chunk.split(/\s+/).length
+    let processedChunks = [];
+    const writer = await ai.writer.create();
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const chunkTokens = estimateTokens(chunk);
+      debugLog('AI Processing', 'Processing chunk', {
+        chunkIndex: i + 1,
+        totalChunks: chunks.length,
+        tokens: chunkTokens,
+        length: chunk.length
       });
 
-      const context = 
-        "You are an expert content analyst and writer. Transform this content into clear, well-organized notes.\n\n" +
-        "GUIDELINES:\n" +
-        "1. Structure & Organization:\n" +
-        "   • Break down complex topics into digestible bullet points\n" +
-        "   • Use clear hierarchical organization (main points → sub-points)\n" +
-        "   • Group related concepts together logically\n\n" +
-        "2. Content Treatment:\n" +
-        "   • Preserve precise terminology and specific details\n" +
-        "   • Clarify complex ideas without oversimplifying\n" +
-        "   • Keep numerical data, statistics, and exact specifications\n" +
-        "   • Include relevant examples and illustrations\n\n" +
-        "3. Writing Style:\n" +
-        "   • Use concise, clear language\n" +
-        "   • Maintain professional tone\n" +
-        "   • Employ consistent formatting\n" +
-        "   • Add brief explanations where needed\n\n" +
-        "OUTPUT FORMAT:\n" +
-        "MAIN CONCEPT:\n" +
-        "• Key point with clear explanation\n" +
-        "  - Supporting detail\n" +
-        "  - Evidence or example\n\n" +
-        "IMPORTANT DETAILS:\n" +
-        "• Specific information\n" +
-        "• Critical data points\n" +
-        "• Notable relationships\n\n" +
-        "EXAMPLES & APPLICATIONS: (if relevant)\n" +
-        "• Practical usage\n" +
-        "• Real-world scenarios\n" +
-        "• Case studies\n\n" +
-        "Note: Focus on accuracy and clarity. Aim for a readability level suitable for a knowledgeable audience in the subject area.";
+      // Add contextual information for better chunk processing
+      const enrichedChunk = `
+Content Section ${i + 1} of ${chunks.length}:
+---
+${chunk}
+---
 
-      const result = await writer.write(chunk, { 
+Guidelines:
+- If this is not the first section, it continues from the previous section
+- If this is not the last section, it continues in the next section
+- Extract both factual information and subjective insights
+- Include any emotional or personal elements if present
+- Preserve specific examples and analogies
+- Maintain chronological order if relevant`;
+
+      const context = 
+        "You are an expert content analyst. Transform this content section into clear, organized bullet points while:\n" +
+        "1. ALWAYS format output as bullet points for easy scanning\n" +
+        "2. Extract both objective facts AND subjective insights\n" +
+        "3. Capture key themes, patterns, and relationships\n" +
+        "4. Preserve technical details when present\n" +
+        "5. Include emotional elements and personal perspectives\n" +
+        "6. Note real-world examples and practical applications\n" +
+        "7. Highlight unique or creative ideas\n" +
+        "8. Add brief context for clarity\n" +
+        "9. Use sub-bullets for related points\n" +
+        "10. Keep original quotes if meaningful\n\n" +
+        "Structure the output like this:\n" +
+        "• Main point or theme\n" +
+        "  - Supporting detail or example\n" +
+        "  - Related insight or application\n" +
+        "• Next main point\n" +
+        "  - etc.\n\n" +
+        "Output ONLY the bullet points without any meta-text or section markers.";
+
+      const result = await writer.write(enrichedChunk, { 
         context,
-        maxTokens: TOKEN_LIMITS.NANO_CONTEXT - 300 // Leave more room for detailed context
+        maxTokens: TOKEN_LIMITS.NANO_AVAILABLE - TOKEN_LIMITS.PROMPT_RESERVE
       });
 
       if (result?.trim()) {
-        processedChunks.push(result.trim());
+        // Clean up any remaining section markers and ensure proper bullet formatting
+        const cleanedResult = result.trim()
+          .replace(/^Content Section \d+ of \d+:?\s*/, '')
+          .replace(/^-{3,}\s*/, '')
+          .replace(/\s*-{3,}$/, '')
+          // Ensure main bullets use •
+          .replace(/^[•\-\*]\s/gm, '• ')
+          // Ensure sub-bullets use -
+          .replace(/^\s+[•\*]\s/gm, '  - ')
+          // Add newlines between main bullet points for readability
+          .replace(/(\n• )/g, '\n\n• ');
+
+        processedChunks.push(cleanedResult);
+        debugLog('AI Processing', 'Processed chunk result', {
+          chunkIndex: i + 1,
+          inputTokens: chunkTokens,
+          outputTokens: estimateTokens(cleanedResult),
+          preview: cleanedResult
+        });
       }
     }
 
-    // If we have multiple chunks, combine them with technical focus
-    if (processedChunks.length > 1) {
-      const combinationContext = 
-        "You are a technical documentation expert. Combine these technical extracts into a cohesive document.\n\n" +
-        "Requirements:\n" +
-        "1. Merge related technical concepts while maintaining detail\n" +
-        "2. Group similar implementations and examples\n" +
-        "3. Consolidate specifications and requirements\n" +
-        "4. Ensure all code examples are properly contextualized\n" +
-        "5. Maintain technical precision while improving clarity\n\n" +
-        "Format as a technical document with clear sections for:\n" +
-        "- Core Technical Concepts\n" +
-        "- Implementation Details\n" +
-        "- Code Examples\n" +
-        "- Technical Specifications\n\n" +
-        "Prioritize technical accuracy and clarity.";
-
-      const finalResult = await writer.write(processedChunks.join('\n---\n'), {
-        context: combinationContext,
-        maxTokens: TOKEN_LIMITS.NANO_CONTEXT - 200
+    if (processedChunks.length === 0) {
+      debugLog('AI Processing', 'No chunks were processed successfully', {
+        originalContent: !!content,
+        cleanedContent: !!cleanedContent
       });
-
-      return finalResult?.trim() || content;
+      return content;
     }
 
-    return processedChunks[0] || content;
+    if (processedChunks.length === 1) {
+      const result = processedChunks[0];
+      debugLog('AI Processing', 'Single chunk result', {
+        inputTokens: estimateTokens(cleanedContent),
+        outputTokens: estimateTokens(result)
+      });
+      return result;
+    }
+
+    // Join all chunks with double newlines for readability
+    const combinedContent = processedChunks.join('\n\n');
+    debugLog('AI Processing', 'Multiple chunks combined', {
+      numberOfChunks: processedChunks.length,
+      totalTokens: estimateTokens(combinedContent),
+      preview: combinedContent.substring(0, 100) + '...'
+    });
+
+    return combinedContent;
 
   } catch (error) {
     debugLog('AI Processing', 'Error processing with AI', { error });
@@ -165,46 +246,139 @@ async function processWithAI(content) {
 
 // Helper function to split content into chunks
 function splitIntoChunks(text, tokenLimit) {
-  // Rough estimate: 1 token ≈ 4 characters for English text
-  const charsPerChunk = (tokenLimit - 200) * 4; // Leave room for context
+  // Calculate available tokens for content, leaving room for context and overhead
+  const availableTokens = tokenLimit - TOKEN_LIMITS.PROMPT_RESERVE;
+  const sourceTokens = estimateTokens(text);
+  
+  debugLog('Chunk Processing', 'Starting content analysis', {
+    totalTokens: sourceTokens,
+    tokenLimit,
+    availableTokens,
+    estimatedChunks: Math.ceil(sourceTokens / availableTokens)
+  });
+
+  if (sourceTokens <= availableTokens) {
+    debugLog('Chunk Processing', 'Content fits in single chunk', {
+      contentTokens: sourceTokens,
+      availableTokens
+    });
+    return [text];
+  }
+  
   const chunks = [];
   
-  // Use sentence boundaries for more natural splits
-  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
-  let currentChunk = '';
+  // Split into sentences more carefully, preserving newlines
+  const sentences = text.split(/([.!?]\s+|\n+)/).reduce((acc, current, i, arr) => {
+    if (i % 2 === 0) {
+      return acc.concat(current + (arr[i + 1] || ''));
+    }
+    return acc;
+  }, []).filter(s => s.trim());
 
-  for (const sentence of sentences) {
-    if ((currentChunk + sentence).length > charsPerChunk) {
+  debugLog('Chunk Processing', `Split into ${sentences.length} sentences`);
+  
+  let currentChunk = '';
+  let currentChunkTokens = 0;
+
+  for (let i = 0; i < sentences.length; i++) {
+    const sentence = sentences[i];
+    const sentenceTokens = estimateTokens(sentence);
+    
+    debugLog('Chunk Processing', `Processing sentence ${i + 1}/${sentences.length}`, {
+      sentenceTokens,
+      currentChunkTokens,
+      wouldExceedLimit: currentChunkTokens + sentenceTokens > availableTokens
+    });
+
+    if (currentChunkTokens + sentenceTokens > availableTokens) {
       if (currentChunk) {
         chunks.push(currentChunk.trim());
+        debugLog('Chunk Processing', `Created chunk`, {
+          tokens: currentChunkTokens,
+          sentences: currentChunk.split(/[.!?]\s+/).length
+        });
         currentChunk = '';
+        currentChunkTokens = 0;
       }
-      // If a single sentence is too long, split it
-      if (sentence.length > charsPerChunk) {
-        const words = sentence.split(/\s+/);
-        let tempChunk = '';
-        for (const word of words) {
-          if ((tempChunk + ' ' + word).length > charsPerChunk) {
-            chunks.push(tempChunk.trim());
-            tempChunk = word;
+      
+      if (sentenceTokens > availableTokens) {
+        debugLog('Chunk Processing', 'Processing long sentence', {
+          sentenceTokens,
+          availableTokens
+        });
+        
+        const paragraphs = sentence.split(/\n\s*\n/);
+        for (const paragraph of paragraphs) {
+          const paragraphTokens = estimateTokens(paragraph);
+          
+          if (paragraphTokens <= availableTokens) {
+            chunks.push(paragraph.trim());
+            debugLog('Chunk Processing', `Created paragraph chunk`, {
+              tokens: paragraphTokens
+            });
           } else {
-            tempChunk += (tempChunk ? ' ' : '') + word;
+            const clauses = paragraph.split(/([,;]\s+)/).reduce((acc, current, i, arr) => {
+              if (i % 2 === 0) {
+                return acc.concat(current + (arr[i + 1] || ''));
+              }
+              return acc;
+            }, []);
+            
+            let clauseChunk = '';
+            let clauseTokens = 0;
+            
+            for (const clause of clauses) {
+              const clauseEstTokens = estimateTokens(clause);
+              
+              if (clauseTokens + clauseEstTokens > availableTokens) {
+                if (clauseChunk) {
+                  chunks.push(clauseChunk.trim());
+                  debugLog('Chunk Processing', `Created clause chunk`, {
+                    tokens: clauseTokens
+                  });
+                  clauseChunk = '';
+                  clauseTokens = 0;
+                }
+              }
+              
+              clauseChunk += clause;
+              clauseTokens += clauseEstTokens;
+            }
+            
+            if (clauseChunk) {
+              chunks.push(clauseChunk.trim());
+              debugLog('Chunk Processing', `Created final clause chunk`, {
+                tokens: clauseTokens
+              });
+            }
           }
-        }
-        if (tempChunk) {
-          currentChunk = tempChunk;
         }
       } else {
         currentChunk = sentence;
+        currentChunkTokens = sentenceTokens;
       }
     } else {
       currentChunk += (currentChunk ? ' ' : '') + sentence;
+      currentChunkTokens += sentenceTokens;
     }
   }
 
   if (currentChunk) {
     chunks.push(currentChunk.trim());
+    debugLog('Chunk Processing', `Created final chunk`, {
+      tokens: currentChunkTokens
+    });
   }
+
+  debugLog('Chunk Processing', 'Finished processing', {
+    originalTokens: sourceTokens,
+    chunks: chunks.length,
+    chunkDetails: chunks.map(chunk => ({
+      tokens: estimateTokens(chunk),
+      sentences: chunk.split(/[.!?]\s+/).length,
+      preview: chunk.substring(0, 100) + '...'
+    }))
+  });
 
   return chunks;
 }
@@ -863,7 +1037,7 @@ async function compressRawMemoriesOnly(memories, projectId) {
 
     const compressedContent = await summarizer.summarize(
       `${input}\n\nCreate a concise synthesis. Format as:\n` +
-      `SUMMARY:\n[Core insights]\n\nKEY POINTS:\n[Bullet points]\n\n` +
+      `SUMMARY:\n[core insights]\n\nKEY POINTS:\n[Bullet points]\n\n` +
       `RELATIONSHIPS:\n[Connections]\n\nDETAILS:\n[Important specifics]`
     );
 
@@ -956,6 +1130,10 @@ DETAILS:
 Fallback compression due to processing constraints.
 
 Source Memories:
+1. Format source URLs elegantly
+2. Include relevant section titles
+3. Note specific references
+
 ${sortedMemories.map((m, i) => `${i + 1}. ${m.content.split('\n')[1]}`).join('\n')}`;
 
   return await storeMemory({
