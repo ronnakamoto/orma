@@ -12,6 +12,7 @@ import {
   ArchiveBoxIcon,
   FolderIcon,
   DocumentArrowDownIcon,
+  ArrowPathIcon,
 } from "@heroicons/react/24/outline";
 
 // Custom components for ReactMarkdown
@@ -229,8 +230,9 @@ const MemorySkeleton = () => {
   );
 };
 
-function Memory({ memory, onDelete, onExport, isLoading }) {
+function Memory({ memory, onDelete, onExport, isLoading, onRewrite }) {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [isRewriting, setIsRewriting] = useState(false);
   
   if (isLoading) {
     return <MemorySkeleton />;
@@ -312,6 +314,22 @@ function Memory({ memory, onDelete, onExport, isLoading }) {
               {memory.importance}
             </span>
           </div>
+          {onRewrite && (
+            <button
+              onClick={() => {
+                setIsRewriting(true);
+                onRewrite(memory.id)
+                  .catch(console.error)
+                  .finally(() => setIsRewriting(false));
+              }}
+              disabled={isRewriting}
+              className="text-gray-400 hover:text-purple-500 transition-colors duration-300 disabled:opacity-50"
+              aria-label="Rewrite memory"
+              title="Regenerate memory"
+            >
+              <ArrowPathIcon className={`h-4 w-4 ${isRewriting ? 'animate-spin' : ''}`} aria-hidden="true" />
+            </button>
+          )}
           {onDelete && (
             <button
               onClick={onDelete}

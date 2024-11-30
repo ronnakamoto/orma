@@ -163,6 +163,25 @@ export default function Popup() {
     }
   }
 
+  async function handleRewriteMemory(memoryId) {
+    try {
+      setProcessingMemories(prev => new Set([...prev, memoryId]));
+      await vectorService.rewriteMemory(memoryId, currentProject.id);
+      await loadMemories(currentProject.id);
+    } catch (error) {
+      console.error('Error rewriting memory:', error);
+      if (error.message === 'Vector service not initialized') {
+        setShowSettings(true);
+      }
+    } finally {
+      setProcessingMemories(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(memoryId);
+        return newSet;
+      });
+    }
+  }
+
   return (
     <div className="w-[400px] h-[600px] bg-gray-50 text-gray-900 font-space-grotesk overflow-hidden">
       {showSettings ? (
@@ -303,6 +322,7 @@ export default function Popup() {
                                   key={memory.id}
                                   memory={memory}
                                   onDelete={() => handleDeleteMemory(memory.id)}
+                                  onRewrite={handleRewriteMemory}
                                 />
                               ))}
                             </div>
@@ -320,6 +340,7 @@ export default function Popup() {
                                   key={memory.id}
                                   memory={memory}
                                   onDelete={() => handleDeleteMemory(memory.id)}
+                                  onRewrite={handleRewriteMemory}
                                 />
                               ))}
                             </div>
@@ -347,6 +368,7 @@ export default function Popup() {
                             key={memory.id}
                             memory={memory}
                             onDelete={() => handleDeleteMemory(memory.id)}
+                            onRewrite={handleRewriteMemory}
                           />
                         ))}
                       </div>
