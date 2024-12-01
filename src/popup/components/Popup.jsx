@@ -4,6 +4,7 @@ import Memory from './Memory';
 import Settings from './Settings';
 import Chat from './Chat';
 import Quiz from './Quiz';
+import StatusNotification from './StatusNotification';
 import '../styles/chat.css';
 import '../styles/quiz.css';
 import { vectorService } from '../../services/vectorService';
@@ -378,6 +379,8 @@ export default function Popup() {
               </>
             )}
           </main>
+
+          <StatusNotification />
         </>
       )}
     </div>
