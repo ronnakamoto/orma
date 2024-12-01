@@ -22,6 +22,7 @@ function estimateTokens(text) {
 }
 
 let shortTermBuffer = [];
+let currentOperationStatus = null;
 
 // Initialize IndexedDB when extension is installed
 chrome.runtime.onInstalled.addListener(async () => {
@@ -69,6 +70,12 @@ function debugLog(stage, message, data = null) {
 
 // Clean and extract meaningful text using AI
 async function preprocessContent(content) {
+  updateOperationStatus({ 
+    type: 'loading',
+    message: 'Pre-processing content ...',
+    progress: 45 
+  });
+
   if (!ai?.writer) {
     debugLog('Content Preprocessing', 'ai.writer not available, using raw content');
     return content;
@@ -117,6 +124,12 @@ async function preprocessContent(content) {
 
 // Process content using AI writer
 export async function processWithAI(content) {
+  updateOperationStatus({ 
+    type: 'loading',
+    message: 'Starting to process with AI...',
+    progress: 35 
+  });
+
   try {
     if (!ai?.writer) {
       debugLog('AI Processing', 'ai.writer is not available', { 
@@ -246,6 +259,12 @@ Guidelines:
 
 // Helper function to split content into chunks
 function splitIntoChunks(text, tokenLimit) {
+  updateOperationStatus({ 
+    type: 'loading',
+    message: 'Splitting content into chunks ...',
+    progress: 65 
+  });
+
   // Calculate available tokens for content, leaving room for context and overhead
   const availableTokens = tokenLimit - TOKEN_LIMITS.PROMPT_RESERVE;
   const sourceTokens = estimateTokens(text);
@@ -277,6 +296,13 @@ function splitIntoChunks(text, tokenLimit) {
 
   debugLog('Chunk Processing', `Split into ${sentences.length} sentences`);
   
+  updateOperationStatus({ 
+    type: 'loading',
+    message: 'Performing sentence analysis...',
+    progress: 75 
+  });
+
+
   let currentChunk = '';
   let currentChunkTokens = 0;
 
@@ -385,7 +411,7 @@ function splitIntoChunks(text, tokenLimit) {
 
 async function extractPageContent(tabId) {
   debugLog('Extraction', 'Starting content extraction', { tabId });
-  
+
   try {
     // Extract the raw content from the page
     const [{ result: rawContent }] = await chrome.scripting.executeScript({
@@ -490,7 +516,7 @@ async function extractPageContent(tabId) {
           if (!mainContent) {
             debug('Content', 'No main content found, extracting from body');
             mainContent = extractText(document.body);
-          }
+          }     
 
           // Clean up the extracted content
           const cleanContent = mainContent
@@ -600,6 +626,12 @@ async function calculateImportance(content, existingMemories) {
 
 async function addMemory(content, projectId, metadata = {}) {
   try {
+    updateOperationStatus({ 
+      type: 'loading',
+      message: 'Processing new memory...',
+      progress: 10 
+    });
+
     console.log('=== Starting addMemory ===');
     console.log('Current buffer size:', shortTermBuffer.length);
 
@@ -663,6 +695,15 @@ async function addMemory(content, projectId, metadata = {}) {
       tempId: tempId
     });
 
+    updateOperationStatus({ 
+      type: 'success',
+      message: 'Memory saved successfully',
+      progress: 100 
+    });
+
+    // Clear status after 2 seconds
+    setTimeout(clearOperationStatus, 2000);
+
     return storedMemory;
   } catch (error) {
     console.error("Error in addMemory:", error);
@@ -679,6 +720,14 @@ async function addMemory(content, projectId, metadata = {}) {
       type: 'memoryProcessingComplete',
       memoryId: fallbackMemory.id
     });
+
+    updateOperationStatus({ 
+      type: 'error',
+      message: 'Failed to save memory: ' + error.message 
+    });
+    
+    // Clear error status after 3 seconds
+    setTimeout(clearOperationStatus, 3000);
 
     return fallbackMemory;
   }
@@ -874,6 +923,12 @@ async function compressMemories(memories, projectId) {
 }
 
 async function storeMemory(memory) {
+  updateOperationStatus({ 
+    type: 'loading',
+    message: 'Generating vector embeddings for memory...',
+    progress: 90 
+  });
+
   try {
     const id = await db.addMemory(memory);
     const storedMemory = { ...memory, id };
@@ -1196,6 +1251,12 @@ async function formRootMemory(projectId, memories) {
 }
 
 async function getAllMemories(projectId) {
+  updateOperationStatus({ 
+      type: 'loading',
+      message: 'Finding relevant memories...',
+      progress: 12 
+    });
+
   try {
     return await db.getAllMemories(projectId);
   } catch (error) {
@@ -1325,6 +1386,30 @@ async function processMemoriesWithSlidingWindow(memories, projectId) {
   }
 }
 
+// Status management functions
+function updateOperationStatus(status) {
+  currentOperationStatus = status;
+  chrome.runtime.sendMessage({ 
+    type: 'STATUS_UPDATE', 
+    status 
+  }).catch(() => {
+    // Ignore errors when popup is not open
+  });
+}
+
+function clearOperationStatus() {
+  currentOperationStatus = null;
+  updateOperationStatus(null);
+}
+
+// Message handlers for status
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.type === 'GET_OPERATION_STATUS') {
+    sendResponse({ status: currentOperationStatus });
+    return true;
+  }
+});
+
 // Context Menu Handler
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "save-to-orma") {
@@ -1355,6 +1440,11 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       }
 
       await showNotification(tab, "Extracting page content...", "info");
+      updateOperationStatus({ 
+        type: 'loading',
+        message: 'Extracting content...',
+        progress: 5 
+      });
       const pageContent = await extractPageContent(tab.id);
       
       if (!pageContent) {
