@@ -9,7 +9,7 @@ I believe that technology should enhance our natural abilities, not replace them
 
 ## A Magical Experience
 
-Orma isn't just another note-taking tool. It's a beautifully crafted digital memory companion that works the way your brain does. Every interaction is thoughtfully designed to feel natural and effortless. 
+Orma isn't just another note-taking tool. it's a sophisticated memory layer that enhances your browser's capabilities. By seamlessly integrating with Chrome, it creates an intelligent system that remembers, understands, and enriches your online experiences. Every webpage you visit becomes an opportunity to build your personal knowledge base. 
 
 <div align="center">
   <img src="assets/orma-screenshot.png" alt="Orma Screenshot" width="400"/>
