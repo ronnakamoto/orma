@@ -5,7 +5,7 @@
   <p><em>Your Second Brain, Powered by AI</em></p>
 </div>
 
-Orma is a powerful browser extension that serves as your digital memory companion, using advanced AI to help you remember, understand, and connect information from your web browsing experience.
+Orma(ഓര്‍മ്മ means "Memory" in Malayalam) is a powerful browser extension that serves as your digital memory companion, using advanced AI leveraging Chrome's built-in AI(Google Nano) to help you remember, understand, and connect information from your web browsing experience.
 
 ## Features
 
@@ -15,8 +15,8 @@ Orma is a powerful browser extension that serves as your digital memory companio
 - **Vector Search**: Find related memories using state-of-the-art semantic search
 - **Project Organization**: Group related memories into projects
 - **Interactive Chat**: Engage with your memories through natural conversation
+- **Context Generation For LLMs**: Easily generate context for LLMs like ChatGPT, Claude, etc
 - **Knowledge Quiz**: Test and reinforce your understanding
-- **Customizable Settings**: Configure the extension to match your workflow
 
 ## Getting Started
 
