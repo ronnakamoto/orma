@@ -7,7 +7,7 @@
 
 I believe that technology should enhance our natural abilities, not replace them. That's why I created **Orma** (ഓര്‍മ്മ, meaning "Memory" in Malayalam) – a revolutionary browser extension that transforms how you capture, understand, and interact with information online.
 
-## A Magical Experience
+## An Intelligent Memory Layer For Modern Browsers
 
 Orma isn't just another note-taking tool. It's a sophisticated memory layer that enhances your browser's capabilities. By seamlessly integrating with Chrome, it creates an intelligent system that remembers, understands, and enriches your online experiences. Every webpage you visit becomes an opportunity to build your personal knowledge base. 
 
