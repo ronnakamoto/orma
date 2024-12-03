@@ -11,6 +11,10 @@ I believe that technology should enhance our natural abilities, not replace them
 
 Orma isn't just another note-taking tool. It's a beautifully crafted digital memory companion that works the way your brain does. Every interaction is thoughtfully designed to feel natural and effortless. 
 
+<div align="center">
+  <img src="assets/orma-screenshot.png" alt="Orma Screenshot" width="400"/>
+</div>
+
 It empowers you and the LLM tools like ChatGPT or Claude you use everyday as well, by providing memories that are both meaningful and contextual.
 
 ### Features That Matter
