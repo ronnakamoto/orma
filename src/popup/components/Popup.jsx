@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { PlusIcon, TrashIcon, Cog6ToothIcon, MagnifyingGlassIcon, AcademicCapIcon } from '@heroicons/react/24/outline';
+import { 
+  PlusIcon, TrashIcon, Cog6ToothIcon, MagnifyingGlassIcon, 
+  AcademicCapIcon, DocumentTextIcon, ChatBubbleLeftRightIcon,
+  ArrowPathIcon
+} from '@heroicons/react/24/outline';
 import Memory from './Memory';
 import Settings from './Settings';
 import Chat from './Chat';
@@ -24,6 +28,8 @@ export default function Popup() {
   const [searching, setSearching] = useState(false);
   const [processingMemories, setProcessingMemories] = useState(new Set());
   const [loadingMemories, setLoadingMemories] = useState(new Set());
+  const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [summaryStatus, setSummaryStatus] = useState('');
 
   useEffect(() => {
     loadProjects();
@@ -183,6 +189,47 @@ export default function Popup() {
     }
   }
 
+  async function handleGenerateSummary() {
+    if (!currentProject) return;
+    
+    setGeneratingSummary(true);
+    try {
+      const summary = await vectorService.generateProjectSummary(currentProject.id);
+      
+      // Create a blob and download it
+      const blob = new Blob([summary], { type: 'text/markdown' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${currentProject.name}-summary.md`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('Error generating summary:', error);
+    } finally {
+      setGeneratingSummary(false);
+    }
+  }
+
+  const ActionButton = ({ onClick, icon: Icon, label, color = "indigo", disabled = false }) => (
+    <div className="relative group">
+      <motion.button
+        onClick={onClick}
+        disabled={disabled}
+        className={`p-2 text-${color}-600 hover:text-${color}-800 hover:bg-${color}-50 rounded-lg focus:outline-none transition-colors duration-300 ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        whileHover={!disabled ? { scale: 1.05 } : {}}
+        whileTap={!disabled ? { scale: 0.95 } : {}}
+      >
+        <Icon className="h-5 w-5" />
+      </motion.button>
+      <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 absolute -bottom-8 left-1/2 transform -translate-x-1/2 px-2 py-1 bg-gray-800 text-white text-xs rounded whitespace-nowrap z-50">
+        {label}
+      </div>
+    </div>
+  );
+
   return (
     <div className="w-[400px] h-[600px] bg-gray-50 text-gray-900 font-space-grotesk overflow-hidden">
       {showSettings ? (
@@ -206,36 +253,14 @@ export default function Popup() {
               <h1 className="text-2xl font-semibold bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent">
                 Orma
               </h1>
-              <div className="flex items-center space-x-2">
-                <motion.button
-                  onClick={() => currentProject && setShowChat(true)}
-                  className={`p-1.5 text-gray-400 hover:text-gray-600 focus:outline-none transition-colors duration-300 ${!currentProject ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  whileHover={currentProject ? { scale: 1.05 } : {}}
-                  whileTap={currentProject ? { scale: 0.95 } : {}}
-                  disabled={!currentProject}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </motion.button>
-                <motion.button
-                  onClick={() => currentProject && setShowQuiz(true)}
-                  className={`p-1.5 text-gray-400 hover:text-gray-600 focus:outline-none transition-colors duration-300 ${!currentProject ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  whileHover={currentProject ? { scale: 1.05 } : {}}
-                  whileTap={currentProject ? { scale: 0.95 } : {}}
-                  disabled={!currentProject}
-                >
-                  <AcademicCapIcon className="h-5 w-5" />
-                </motion.button>
-                <motion.button
-                  onClick={() => setShowSettings(true)}
-                  className="p-1.5 text-gray-400 hover:text-gray-600 focus:outline-none transition-colors duration-300"
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                >
-                  <Cog6ToothIcon className="h-5 w-5" />
-                </motion.button>
-              </div>
+              <motion.button
+                onClick={() => setShowSettings(true)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 focus:outline-none transition-colors duration-300"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <Cog6ToothIcon className="h-5 w-5" />
+              </motion.button>
             </div>
             <button
               onClick={handleCreateProject}
@@ -294,16 +319,34 @@ export default function Popup() {
 
                 {currentProject && (
                   <div className="space-y-4 animate-fade-in">
-                    <div className="flex justify-between items-center">
+                    <div className="flex flex-col space-y-3">
                       <h2 className="text-lg font-medium text-gray-900">
                         {currentProject.name}
                       </h2>
-                      <button
-                        onClick={() => handleDeleteProject(currentProject.id)}
-                        className="text-sm text-red-600 hover:text-red-800 transition-colors duration-300 ease-in-out hover:underline"
-                      >
-                        Delete Project
-                      </button>
+                      <div className="flex items-center justify-start space-x-2 p-2 bg-white rounded-lg shadow-sm">
+                        <ActionButton
+                          onClick={() => setShowChat(true)}
+                          icon={ChatBubbleLeftRightIcon}
+                          label="Chat with Project"
+                        />
+                        <ActionButton
+                          onClick={() => setShowQuiz(true)}
+                          icon={AcademicCapIcon}
+                          label="Quiz Mode"
+                        />
+                        <ActionButton
+                          onClick={handleGenerateSummary}
+                          icon={DocumentTextIcon}
+                          label={generatingSummary ? 'Generating...' : 'Generate Summary'}
+                          disabled={generatingSummary}
+                        />
+                        <ActionButton
+                          onClick={() => handleDeleteProject(currentProject.id)}
+                          icon={TrashIcon}
+                          label="Delete Project"
+                          color="red"
+                        />
+                      </div>
                     </div>
 
                     {searching ? (

@@ -1481,6 +1481,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ status: currentOperationStatus });
     return true;
   }
+  
+  if (request.type === 'SUMMARY_STATUS_UPDATE') {
+    updateOperationStatus(request.status);
+    return true;
+  }
 });
 
 // Context Menu Handler
@@ -1496,7 +1501,13 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         return;
       }
 
-      await addMemory(info.selectionText, currentProjectId);
+      const metadata = {
+        source: tab.url,
+        title: tab.title,
+        timestamp: new Date().toISOString()
+      };
+
+      await addMemory(info.selectionText, currentProjectId, metadata);
       await showNotification(tab, "Added to Orma memory!", "success");
     } catch (error) {
       console.error("Error saving memory:", error);
