@@ -69,7 +69,7 @@ function debugLog(stage, message, data = null) {
 }
 
 // Clean and extract meaningful text using AI
-async function preprocessContent(content) {
+async function preprocessContent(content, metadata = {}) {
   updateOperationStatus({ 
     type: 'loading',
     message: 'Pre-processing content ...',
@@ -84,11 +84,22 @@ async function preprocessContent(content) {
   try {
     debugLog('Content Preprocessing', 'Starting text extraction', {
       inputLength: content.length,
-      estimatedTokens: estimateTokens(content)
+      estimatedTokens: estimateTokens(content),
+      isGitHub: metadata.isGitHub
     });
 
     const writer = await ai.writer.create();
-    const context = 
+    
+    // Enhanced context for GitHub content
+    const context = metadata.isGitHub ? 
+      "You are a GitHub content extraction expert. Extract and clean the main content while:\n" +
+      "1. Preserve markdown formatting and structure\n" +
+      "2. Keep code blocks intact with proper language tags\n" +
+      "3. Maintain headers, lists, and tables in markdown format\n" +
+      "4. Preserve links and references\n" +
+      "5. Remove UI elements and navigation content\n" +
+      "6. Keep technical terms and repository-specific terminology\n\n" +
+      "Output the cleaned content in proper markdown format without any explanations or metadata." :
       "You are a text extraction expert. Extract and clean the main content while:\n" +
       "1. Preserve all meaningful information\n" +
       "2. Remove redundant formatting and noise\n" +
@@ -112,7 +123,8 @@ async function preprocessContent(content) {
       originalLength: content.length,
       cleanedLength: cleanedContent.length,
       originalTokens: estimateTokens(content),
-      cleanedTokens: estimateTokens(cleanedContent)
+      cleanedTokens: estimateTokens(cleanedContent),
+      isGitHub: metadata.isGitHub
     });
 
     return cleanedContent.trim();
@@ -123,7 +135,7 @@ async function preprocessContent(content) {
 }
 
 // Process content using AI writer
-export async function processWithAI(content) {
+export async function processWithAI(content, metadata = {}) {
   updateOperationStatus({ 
     type: 'loading',
     message: 'Starting to process with AI...',
@@ -142,7 +154,7 @@ export async function processWithAI(content) {
     debugLog('AI Processing', 'Starting content processing');
     
     // First, preprocess the content
-    const cleanedContent = await preprocessContent(content);
+    const cleanedContent = await preprocessContent(content, metadata);
     
     // Split content into chunks if it exceeds the token limit
     const chunks = splitIntoChunks(cleanedContent, TOKEN_LIMITS.NANO_CONTEXT);
@@ -413,10 +425,14 @@ async function extractPageContent(tabId) {
   debugLog('Extraction', 'Starting content extraction', { tabId });
 
   try {
+    // Get the tab URL first to check if it's a GitHub page
+    const tab = await chrome.tabs.get(tabId);
+    const isGitHub = tab.url.includes('github.com');
+
     // Extract the raw content from the page
     const [{ result: rawContent }] = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => {
+      func: (isGitHub) => {
         const debug = (stage, message, data = null) => {
           console.log(`[Orma Debug - Content Script] ${stage}: ${message}`, data ? data : '');
         };
@@ -425,8 +441,22 @@ async function extractPageContent(tabId) {
           debug('DOM', 'Starting content extraction');
 
           // Function to extract text content from an element
-          const extractText = (element) => {
+          const extractText = (element, isMarkdown = false) => {
             if (!element) return '';
+
+            // Special handling for code blocks in GitHub
+            if (isMarkdown) {
+              const codeBlocks = element.querySelectorAll('pre');
+              codeBlocks.forEach(pre => {
+                const code = pre.querySelector('code');
+                if (code) {
+                  const lang = Array.from(code.classList)
+                    .find(cls => cls.startsWith('language-'))
+                    ?.replace('language-', '') || '';
+                  code.textContent = `\n\`\`\`${lang}\n${code.textContent}\n\`\`\`\n`;
+                }
+              });
+            }
 
             // Get all text nodes
             const textNodes = [];
@@ -467,21 +497,64 @@ async function extractPageContent(tabId) {
                   continue;
                 }
 
-                // Format based on element type
-                if (/^h[1-6]$/.test(tagName)) {
-                  textNodes.push(`\n# ${text}\n`);
-                } else if (tagName === 'li') {
-                  textNodes.push(`\n- ${text}`);
-                } else if (tagName === 'p' || (tagName === 'div' && text.length > 30)) {
-                  textNodes.push(`\n${text}\n`);
-                } else if (text.length > 20 || text.includes('.')) {
-                  textNodes.push(text);
+                // Enhanced formatting for GitHub markdown
+                if (isMarkdown) {
+                  if (/^h[1-6]$/.test(tagName)) {
+                    const level = tagName[1];
+                    textNodes.push(`\n${'#'.repeat(level)} ${text}\n`);
+                  } else if (tagName === 'li') {
+                    const isOrdered = parent.parentElement?.tagName === 'OL';
+                    textNodes.push(isOrdered ? `\n1. ${text}` : `\n- ${text}`);
+                  } else if (tagName === 'p') {
+                    textNodes.push(`\n${text}\n`);
+                  } else if (tagName === 'a' && parent.href) {
+                    textNodes.push(`[${text}](${parent.href})`);
+                  } else if (tagName === 'td' || tagName === 'th') {
+                    textNodes.push(` ${text} |`);
+                  } else if (tagName === 'tr' && text.trim()) {
+                    textNodes.push('\n|');
+                  } else if (text.length > 20 || text.includes('.')) {
+                    textNodes.push(text);
+                  }
+                } else {
+                  // Standard formatting for non-GitHub content
+                  if (/^h[1-6]$/.test(tagName)) {
+                    textNodes.push(`\n# ${text}\n`);
+                  } else if (tagName === 'li') {
+                    textNodes.push(`\n- ${text}`);
+                  } else if (tagName === 'p' || (tagName === 'div' && text.length > 30)) {
+                    textNodes.push(`\n${text}\n`);
+                  } else if (text.length > 20 || text.includes('.')) {
+                    textNodes.push(text);
+                  }
                 }
               }
             }
 
-            return textNodes.join(' ');
+            return textNodes.join(' ').replace(/\|\s+\|/g, '|').replace(/\n\s+\n/g, '\n\n');
           };
+
+          // For GitHub pages, first try to find the markdown content
+          if (isGitHub) {
+            const markdownBody = document.querySelector('.markdown-body.entry-content');
+            if (markdownBody) {
+              debug('Content', 'Found GitHub markdown content');
+              return extractText(markdownBody, true);
+            }
+
+            // Additional GitHub-specific selectors
+            const readmeContent = document.querySelector('#readme .markdown-body');
+            if (readmeContent) {
+              debug('Content', 'Found GitHub README content');
+              return extractText(readmeContent, true);
+            }
+
+            const wikiContent = document.querySelector('.wiki-content .markdown-body');
+            if (wikiContent) {
+              debug('Content', 'Found GitHub Wiki content');
+              return extractText(wikiContent, true);
+            }
+          }
 
           // Try to find the main content container
           const selectors = [
@@ -539,6 +612,7 @@ async function extractPageContent(tabId) {
           return '';
         }
       },
+      args: [isGitHub]
     });
 
     debugLog('Extraction', 'Raw content extracted', {
@@ -551,20 +625,19 @@ async function extractPageContent(tabId) {
       throw new Error('No content found on page');
     }
 
-    // Process the content with AI
-    const processedContent = await processWithAI(rawContent);
+    // Process the content with AI, passing GitHub metadata
+    const processedContent = await processWithAI(rawContent, { isGitHub });
     
-    debugLog('Final', 'Content processing complete', {
-      rawLength: rawContent.length,
-      processedLength: processedContent.length,
-      success: processedContent.length > 0
+    debugLog('Final', 'Content processed', {
+      contentLength: processedContent?.length || 0,
+      hasContent: !!processedContent,
+      isGitHub
     });
 
     return processedContent;
-
   } catch (error) {
-    debugLog('Error', 'Content extraction failed', { error: error.message });
-    throw new Error(`Could not extract page content: ${error.message}`);
+    console.error('Error extracting page content:', error);
+    return null;
   }
 }
 
@@ -1543,6 +1616,21 @@ function formatCodeInContent(content) {
 async function processContent(content, url) {
   try {
     const title = await getCurrentTabTitle();
+    
+    // Handle GitHub pages specifically
+    if (url && url.includes('github.com')) {
+      const githubContent = await chrome.tabs.executeScript({
+        code: `
+          const markdownBody = document.querySelector('.markdown-body.entry-content');
+          markdownBody ? markdownBody.innerText : null;
+        `
+      });
+      
+      if (githubContent && githubContent[0]) {
+        content = githubContent[0];
+      }
+    }
+    
     let memoryContent = await generateMemoryContent(content, url, title);
     
     if (memoryContent) {
