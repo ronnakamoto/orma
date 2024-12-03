@@ -17,6 +17,7 @@ mix.setPublicPath('dist')
    .copy('src/manifest.json', 'dist')
    .copy('src/html/popup.html', 'dist')
    .copy('src/html/offscreen.html', 'dist')
+   .copy('assets/*.png', 'dist/assets')
    .webpackConfig({
      module: {
        rules: [
