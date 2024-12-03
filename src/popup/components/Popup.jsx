@@ -29,6 +29,7 @@ export default function Popup() {
   const [processingMemories, setProcessingMemories] = useState(new Set());
   const [loadingMemories, setLoadingMemories] = useState(new Set());
   const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [summaryStatus, setSummaryStatus] = useState('');
 
   useEffect(() => {
     loadProjects();
@@ -336,7 +337,7 @@ export default function Popup() {
                         <ActionButton
                           onClick={handleGenerateSummary}
                           icon={DocumentTextIcon}
-                          label="Generate Summary"
+                          label={generatingSummary ? 'Generating...' : 'Generate Summary'}
                           disabled={generatingSummary}
                         />
                         <ActionButton

@@ -496,9 +496,19 @@ Guidelines for generating key points:
         throw new Error('No memories found in project');
       }
 
+      // Send status updates through background script
+      const updateStatus = (message, type = 'loading') => {
+        chrome.runtime.sendMessage({
+          type: 'SUMMARY_STATUS_UPDATE',
+          status: { type, message }
+        });
+      };
+
+      updateStatus('Processing project memories...', 'loading');
       const combinedContent = memories.map(m => m.content).join('\n\n');
 
       // Agent 1: Outline Generator
+      updateStatus('Creating project outline...', 'loading');
       const outlineContext = 
         "You are an expert outline generator. Create a detailed, hierarchical outline for study notes based on the provided content. Follow these guidelines:\n" +
         "1. Identify main topics and subtopics\n" +
@@ -511,6 +521,7 @@ Guidelines for generating key points:
       const outline = await processWithAI(combinedContent, { context: outlineContext });
 
       // Agent 2: Content Writer
+      updateStatus('Writing detailed content...', 'loading');
       const writerContext = 
         "You are a skilled technical writer. Write detailed study notes following the provided outline. Guidelines:\n" +
         "1. Use clear, concise explanations\n" +
@@ -525,6 +536,7 @@ Guidelines for generating key points:
       const content = await processWithAI(combinedContent, { context: writerContext });
 
       // Agent 3: Proofreader and Enhancer
+      updateStatus('Proofreading and enhancing...', 'loading');
       const proofreadContext = 
         "You are a meticulous proofreader and content enhancer. Review and improve the study notes. Follow these guidelines:\n" +
         "1. Check for technical accuracy and consistency\n" +
@@ -539,6 +551,8 @@ Guidelines for generating key points:
 
       const finalContent = await processWithAI(content, { context: proofreadContext });
 
+      updateStatus('Preparing final document...', 'loading');
+
       // Add metadata
       const metadata = 
         "---\n" +
@@ -547,8 +561,25 @@ Guidelines for generating key points:
         `Number of Memories: ${memories.length}\n` +
         "---\n\n";
 
+      updateStatus('Summary generated successfully!', 'success');
+
+      // Clear status after 2 seconds
+      setTimeout(() => {
+        chrome.runtime.sendMessage({
+          type: 'SUMMARY_STATUS_UPDATE',
+          status: null
+        });
+      }, 2000);
+
       return metadata + finalContent;
     } catch (error) {
+      chrome.runtime.sendMessage({
+        type: 'SUMMARY_STATUS_UPDATE',
+        status: {
+          type: 'error',
+          message: `Error: ${error.message}`
+        }
+      });
       console.error('Error generating project summary:', error);
       throw error;
     }

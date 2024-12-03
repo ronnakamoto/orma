@@ -1481,6 +1481,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ status: currentOperationStatus });
     return true;
   }
+  
+  if (request.type === 'SUMMARY_STATUS_UPDATE') {
+    updateOperationStatus(request.status);
+    return true;
+  }
 });
 
 // Context Menu Handler
