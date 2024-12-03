@@ -17,6 +17,7 @@ Orma(ഓര്‍മ്മ means "Memory" in Malayalam) is a powerful browser ex
 - **Interactive Chat**: Engage with your memories through natural conversation
 - **Context Generation For LLMs**: Easily generate context for LLMs like ChatGPT, Claude, etc
 - **Knowledge Quiz**: Test and reinforce your understanding
+- **Project Summary**: One-click summary of all memories in a project using Google Nano AI Agents
 
 ## Getting Started
 

@@ -486,6 +486,73 @@ Guidelines for generating key points:
       throw error;
     }
   }
+
+  // Generate a comprehensive summary of all project memories using multiple AI agents
+  async generateProjectSummary(projectId) {
+    try {
+      const memories = await db.memories.where('projectId').equals(projectId).toArray();
+      
+      if (memories.length === 0) {
+        throw new Error('No memories found in project');
+      }
+
+      const combinedContent = memories.map(m => m.content).join('\n\n');
+
+      // Agent 1: Outline Generator
+      const outlineContext = 
+        "You are an expert outline generator. Create a detailed, hierarchical outline for study notes based on the provided content. Follow these guidelines:\n" +
+        "1. Identify main topics and subtopics\n" +
+        "2. Use clear hierarchical structure (e.g., 1, 1.1, 1.1.1)\n" +
+        "3. Keep the outline balanced and comprehensive\n" +
+        "4. Include placeholders for examples and code snippets\n" +
+        "5. Note areas that need special attention or detailed explanation\n\n" +
+        "Output ONLY the outline in markdown format.";
+
+      const outline = await processWithAI(combinedContent, { context: outlineContext });
+
+      // Agent 2: Content Writer
+      const writerContext = 
+        "You are a skilled technical writer. Write detailed study notes following the provided outline. Guidelines:\n" +
+        "1. Use clear, concise explanations\n" +
+        "2. Include relevant examples and code snippets\n" +
+        "3. Add diagrams or visual descriptions where helpful\n" +
+        "4. Highlight key concepts and terminology\n" +
+        "5. Maintain consistent technical depth\n" +
+        "6. Add cross-references between related topics\n\n" +
+        `Here's the outline to follow:\n\n${outline}\n\n` +
+        "Write the full content in markdown format.";
+
+      const content = await processWithAI(combinedContent, { context: writerContext });
+
+      // Agent 3: Proofreader and Enhancer
+      const proofreadContext = 
+        "You are a meticulous proofreader and content enhancer. Review and improve the study notes. Follow these guidelines:\n" +
+        "1. Check for technical accuracy and consistency\n" +
+        "2. Improve clarity and readability\n" +
+        "3. Add helpful annotations or margin notes\n" +
+        "4. Ensure proper markdown formatting\n" +
+        "5. Add summary boxes for complex topics\n" +
+        "6. Include study tips or memory aids\n" +
+        "7. Verify code snippets and examples\n" +
+        "8. Add a table of contents at the beginning\n\n" +
+        "Enhance the following content while maintaining its structure:\n\n";
+
+      const finalContent = await processWithAI(content, { context: proofreadContext });
+
+      // Add metadata
+      const metadata = 
+        "---\n" +
+        `Generated: ${new Date().toISOString()}\n` +
+        `Project ID: ${projectId}\n` +
+        `Number of Memories: ${memories.length}\n` +
+        "---\n\n";
+
+      return metadata + finalContent;
+    } catch (error) {
+      console.error('Error generating project summary:', error);
+      throw error;
+    }
+  }
 }
 
 export const vectorService = new VectorService();
